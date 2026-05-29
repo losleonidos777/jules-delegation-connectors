@@ -6,16 +6,48 @@ const SERVER_INFO = { name: 'jules-delegate-mcp', version: '0.1.0' };
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
 const framing = process.env.MCP_FRAMING || 'newline';
 let buffer = '';
+let draining = false;
+let pendingDrain = false;
+let inflight = 0;
+let stdinEnded = false;
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => {
   buffer += chunk;
-  drainBuffer().catch(error => {
-    sendError(null, -32603, formatError(error));
-  });
+  scheduleDrain();
 });
 
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => {
+  stdinEnded = true;
+  maybeExit();
+});
+
+function scheduleDrain() {
+  if (draining) {
+    pendingDrain = true;
+    return;
+  }
+  draining = true;
+  drainBuffer()
+    .catch(error => {
+      sendError(null, -32603, redactSecrets(formatError(error)));
+    })
+    .finally(() => {
+      draining = false;
+      if (pendingDrain) {
+        pendingDrain = false;
+        scheduleDrain();
+      } else {
+        maybeExit();
+      }
+    });
+}
+
+function maybeExit() {
+  if (stdinEnded && !draining && inflight === 0 && buffer.length === 0) {
+    process.exit(0);
+  }
+}
 
 async function drainBuffer() {
   while (buffer.length) {
@@ -54,11 +86,15 @@ async function handleMessage(message) {
     return;
   }
 
+  inflight += 1;
   try {
     const result = await dispatch(message.method, message.params || {});
     send({ jsonrpc: '2.0', id: message.id, result });
   } catch (error) {
     sendError(message.id, -32603, redactSecrets(formatError(error)));
+  } finally {
+    inflight -= 1;
+    maybeExit();
   }
 }
 

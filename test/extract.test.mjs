@@ -76,3 +76,15 @@ test('summarizeResult surfaces Final agent message section', () => {
   assert.match(text, /## Final agent message/);
   assert.match(text, /SMOKE TEST OK/);
 });
+
+test('summarizeResult tolerates partially populated activity payloads', () => {
+  const acts = [
+    { id: 'p1', planGenerated: { plan: { id: 'plan', steps: null } } },
+    { id: 'a1', artifacts: { malformed: true } },
+    { id: 'a2', artifacts: [{ changeSet: { gitPatch: { unidiffPatch: { not: 'text' } } } }] },
+    { id: 'm1', agentMessaged: { agentMessage: { nested: 'message' } } }
+  ];
+
+  assert.doesNotThrow(() => summarizeResult({ id: '1', outputs: null }, acts));
+  assert.equal(extractPatches(acts).length, 0);
+});

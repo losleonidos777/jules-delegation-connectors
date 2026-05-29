@@ -13,7 +13,8 @@ export function latestPlan(activities) {
 export function formatPlan(plan) {
   if (!plan) return 'No planGenerated activity found.';
   const lines = [`Plan ${plan.id || ''}`.trim()];
-  (plan.steps || []).forEach((step, i) => {
+  asArray(plan.steps).forEach((rawStep, i) => {
+    const step = rawStep || {};
     const index = step.index ?? i;
     const prefix = `${Number(index) + 1}.`;
     lines.push(`${prefix} ${step.title || step.description || step.id || '<untitled step>'}`);
@@ -25,7 +26,7 @@ export function formatPlan(plan) {
 function agentMessageText(activity) {
   const a = activity?.agentMessaged;
   if (!a) return '';
-  return a.agentMessage || a.message || a.text || '';
+  return asText(a.agentMessage || a.message || a.text);
 }
 
 export function latestAgentMessage(activities) {
@@ -39,11 +40,11 @@ export function latestAgentMessage(activities) {
 export function extractPatches(activities) {
   const patches = [];
   for (const activity of sortActivities(activities)) {
-    for (const artifact of activity.artifacts || []) {
+    for (const artifact of asArray(activity.artifacts)) {
       const gitPatch = artifact.changeSet?.gitPatch;
       if (!gitPatch) continue;
       const patch = gitPatch.unidiffPatch;
-      if (!patch) continue;
+      if (typeof patch !== 'string' || !patch) continue;
       patches.push({
         activityId: activity.id,
         activityName: activity.name,
@@ -62,7 +63,7 @@ export function latestPatch(activities) {
 }
 
 export function extractPullRequests(session) {
-  return (session?.outputs || [])
+  return asArray(session?.outputs)
     .map(output => output.pullRequest)
     .filter(Boolean);
 }
@@ -86,6 +87,14 @@ export function summarizeActivities(activities, { limit = 12 } = {}) {
     const originator = activity.originator ? `[${activity.originator}] ` : '';
     return `- ${time}${originator}${activityHeadline(activity)}`;
   }).join('\n');
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function asText(value) {
+  return typeof value === 'string' ? value : '';
 }
 
 export function summarizeResult(session, activities) {

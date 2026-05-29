@@ -10,7 +10,7 @@ export class JulesApiError extends Error {
     super(message);
     this.name = 'JulesApiError';
     this.status = status;
-    this.body = body;
+    this.body = redactObject(body);
     this.url = url;
     this.method = method;
   }
@@ -34,11 +34,15 @@ export function redactSecrets(input) {
   const patterns = [
     /(JULES_API_KEY\s*[=:]\s*)[^\s"']+/gi,
     /(api[_-]?key\s*[=:]\s*)[^\s"']+/gi,
+    /(["']?api[_-]?key["']?\s*:\s*["']?)[^"',\s}]+/gi,
     /(x-goog-api-key\s*[:=]\s*)[^\s"']+/gi,
     /(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._~+/=-]+/gi,
     /(password\s*[=:]\s*)[^\s"']+/gi,
+    /(["']?password["']?\s*:\s*["']?)[^"',\s}]+/gi,
     /(token\s*[=:]\s*)[^\s"']+/gi,
-    /(secret\s*[=:]\s*)[^\s"']+/gi
+    /(["']?token["']?\s*:\s*["']?)[^"',\s}]+/gi,
+    /(secret\s*[=:]\s*)[^\s"']+/gi,
+    /(["']?secret["']?\s*:\s*["']?)[^"',\s}]+/gi
   ];
 
   for (const pattern of patterns) {

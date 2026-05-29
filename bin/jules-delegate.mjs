@@ -173,8 +173,19 @@ async function cmdWatch(api, state, flags, id) {
   const interval = Math.max(1, flagNumber(flags, 'interval', 5));
   const maxPolls = Math.max(1, flagNumber(flags, 'maxPolls', 120));
   let lastState;
+  let consecutiveErrors = 0;
   for (let i = 0; i < maxPolls; i += 1) {
-    const session = await api.getSession(id);
+    let session;
+    try {
+      session = await api.getSession(id);
+      consecutiveErrors = 0;
+    } catch (error) {
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= 5) throw error;
+      if (!flags.json) print(`${new Date().toISOString()} transient error: ${error.message || error}; retrying`);
+      await sleep(interval * 1000);
+      continue;
+    }
     await state.upsertSession(session);
     if (flags.json) writeJson(session);
     else if (session.state !== lastState) print(`${new Date().toISOString()} ${session.name || session.id} ${session.state || '<unknown-state>'}`);

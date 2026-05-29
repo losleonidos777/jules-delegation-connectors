@@ -1,6 +1,9 @@
-import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, appendFile, rename, rm, open } from 'node:fs/promises';
 import path from 'node:path';
 import { redactSecrets } from './errors.mjs';
+
+const LOCK_STALE_MS = 30000;
+const LOCK_RETRY_MS = 25;
 
 export class LocalState {
   constructor({ stateDir = process.env.JULES_STATE_DIR || path.join(process.cwd(), '.jules-orchestrator') } = {}) {
@@ -9,6 +12,7 @@ export class LocalState {
     this.promptsDir = path.join(stateDir, 'prompts');
     this.logsDir = path.join(stateDir, 'logs');
     this.patchesDir = path.join(stateDir, 'patches');
+    this.lockPath = path.join(stateDir, 'sessions.json.lock');
   }
 
   async ensure() {
@@ -20,6 +24,10 @@ export class LocalState {
 
   async read() {
     await this.ensure();
+    return this.readUnlocked();
+  }
+
+  async readUnlocked() {
     try {
       return JSON.parse(await readFile(this.sessionsPath, 'utf8'));
     } catch (error) {
@@ -30,27 +38,42 @@ export class LocalState {
 
   async write(data) {
     await this.ensure();
-    await writeFile(this.sessionsPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    await this.withSessionsLock(() => this.writeUnlocked(data));
+  }
+
+  async writeUnlocked(data) {
+    const tempPath = `${this.sessionsPath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tempPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    await rename(tempPath, this.sessionsPath);
   }
 
   async upsertSession(session, extra = {}) {
-    const data = await this.read();
-    const key = session.name || (session.id ? `sessions/${session.id}` : extra.sessionId);
-    if (!key) return;
-    data.sessions[key] = {
-      ...(data.sessions[key] || {}),
-      ...extra,
-      name: session.name,
-      id: session.id,
-      title: session.title,
-      state: session.state,
-      url: session.url,
-      sourceContext: session.sourceContext,
-      createTime: session.createTime,
-      updateTime: session.updateTime,
-      lastSeenAt: new Date().toISOString()
-    };
-    await this.write(data);
+    await this.ensure();
+    await this.withSessionsLock(async () => {
+      const data = await this.readUnlocked();
+      const key = session.name || (session.id ? `sessions/${session.id}` : extra.sessionId);
+      if (!key) return;
+      const next = { ...(data.sessions[key] || {}) };
+      for (const [k, v] of Object.entries(extra)) {
+        if (v !== undefined) next[k] = v;
+      }
+      const fromSession = {
+        name: session.name,
+        id: session.id,
+        title: session.title,
+        state: session.state,
+        url: session.url,
+        sourceContext: session.sourceContext,
+        createTime: session.createTime,
+        updateTime: session.updateTime
+      };
+      for (const [k, v] of Object.entries(fromSession)) {
+        if (v !== undefined) next[k] = v;
+      }
+      next.lastSeenAt = new Date().toISOString();
+      data.sessions[key] = next;
+      await this.writeUnlocked(data);
+    });
   }
 
   async savePrompt(sessionId, prompt) {
@@ -72,6 +95,27 @@ export class LocalState {
     await writeFile(file, patch, 'utf8');
     return file;
   }
+
+  async withSessionsLock(fn) {
+    let handle;
+    while (!handle) {
+      try {
+        handle = await open(this.lockPath, 'wx');
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        await removeStaleLock(this.lockPath);
+        await sleep(LOCK_RETRY_MS);
+      }
+    }
+
+    try {
+      await handle.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, 'utf8');
+      return await fn();
+    } finally {
+      await handle.close();
+      await rm(this.lockPath, { force: true });
+    }
+  }
 }
 
 export function safeFileName(input) {
@@ -80,4 +124,21 @@ export function safeFileName(input) {
 
 function redactObject(value) {
   return JSON.parse(redactSecrets(JSON.stringify(value)));
+}
+
+async function removeStaleLock(lockPath) {
+  try {
+    const raw = await readFile(lockPath, 'utf8');
+    const [, timestamp] = raw.split('\n');
+    const lockedAt = Date.parse(timestamp);
+    if (Number.isFinite(lockedAt) && Date.now() - lockedAt > LOCK_STALE_MS) {
+      await rm(lockPath, { force: true });
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

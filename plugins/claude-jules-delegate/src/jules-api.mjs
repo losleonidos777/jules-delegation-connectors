@@ -84,7 +84,12 @@ export class JulesApi {
 
     if (autoCreatePr) body.automationMode = 'AUTO_CREATE_PR';
     if (!body.title) delete body.title;
-    if (!body.sourceContext.githubRepoContext.startingBranch) delete body.sourceContext.githubRepoContext.startingBranch;
+    if (!body.sourceContext.githubRepoContext.startingBranch) {
+      delete body.sourceContext.githubRepoContext.startingBranch;
+    }
+    if (Object.keys(body.sourceContext.githubRepoContext).length === 0) {
+      delete body.sourceContext.githubRepoContext;
+    }
 
     return this.request('POST', '/sessions', { body });
   }

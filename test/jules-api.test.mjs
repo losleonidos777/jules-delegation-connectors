@@ -52,3 +52,26 @@ test('listSources follows pagination', async () => {
   assert.deepEqual(sources.map(source => source.name), ['sources/one', 'sources/two']);
   assert.equal(urls.length, 2);
 });
+
+test('JulesApiError stores redacted JSON response bodies', async () => {
+  const api = new JulesApi({
+    apiKey: 'test-key',
+    baseUrl: 'https://example.test/v1alpha',
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: {
+        message: 'bad key',
+        apiKey: 'secret-api-key',
+        token: 'secret-token'
+      }
+    }), { status: 401 })
+  });
+
+  await assert.rejects(
+    () => api.listSources(),
+    error => {
+      assert.equal(error.body.error.apiKey, '[REDACTED]');
+      assert.equal(error.body.error.token, '[REDACTED]');
+      return true;
+    }
+  );
+});
