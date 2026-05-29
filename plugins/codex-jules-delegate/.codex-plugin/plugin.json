@@ -1,0 +1,25 @@
+{
+  "name": "jules-delegate",
+  "version": "0.1.0",
+  "description": "Delegate scoped GitHub coding tasks to Google Jules with Codex skills and MCP tools.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "author": {
+    "name": "Jules Delegation Connectors"
+  },
+  "license": "MIT",
+  "keywords": ["jules", "github", "coding-agent", "mcp", "delegation"],
+  "interface": {
+    "displayName": "Jules Delegate",
+    "shortDescription": "Delegate scoped implementation tasks to Google Jules",
+    "longDescription": "Use Codex as an orchestrator and Google Jules as an asynchronous coding implementer for connected GitHub repositories. Includes a focused skill, prompt policy, and MCP tools for create/watch/approve/result/patch flows.",
+    "developerName": "Jules Delegation Connectors",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write", "MCP"],
+    "defaultPrompt": [
+      "Use Jules Delegate to create a Jules session for a scoped bug fix and wait for plan approval.",
+      "Use Jules Delegate to fetch the result and patch from an existing Jules session."
+    ],
+    "brandColor": "#4285F4"
+  }
+}

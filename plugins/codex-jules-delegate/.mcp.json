@@ -1,0 +1,11 @@
+{
+  "mcp_servers": {
+    "jules": {
+      "command": "node",
+      "args": ["./bin/jules-mcp.mjs"],
+      "env_vars": ["JULES_API_KEY", "JULES_API_BASE_URL", "JULES_STATE_DIR"],
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 120
+    }
+  }
+}

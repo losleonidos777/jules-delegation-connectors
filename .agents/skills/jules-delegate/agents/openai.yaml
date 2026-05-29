@@ -1,0 +1,12 @@
+interface:
+  display_name: "Jules Delegate"
+  short_description: "Delegate scoped coding tasks to Google Jules"
+  brand_color: "#4285F4"
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "jules"
+      description: "Local Jules MCP server from this connector package"
+      transport: "stdio"

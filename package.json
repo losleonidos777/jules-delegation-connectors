@@ -1,0 +1,51 @@
+{
+  "name": "jules-delegation-connectors",
+  "version": "0.1.1",
+  "private": false,
+  "description": "Zero-dependency CLI, MCP server, Claude Code plugin and Codex plugin for delegating GitHub coding tasks to Google Jules.",
+  "type": "module",
+  "bin": {
+    "jules-delegate": "./bin/jules-delegate.mjs",
+    "jules-mcp": "./bin/jules-mcp.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "smoke:cli": "node ./bin/jules-delegate.mjs --help",
+    "smoke:mcp": "node ./scripts/smoke-mcp.mjs",
+    "smoke:mcp:live": "node ./scripts/smoke-mcp-toolcalls.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "jules",
+    "google-jules",
+    "claude-code",
+    "codex",
+    "mcp",
+    "agent-skills",
+    "delegation"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/losleonidos777/jules-delegation-connectors.git"
+  },
+  "homepage": "https://github.com/losleonidos777/jules-delegation-connectors#readme",
+  "bugs": {
+    "url": "https://github.com/losleonidos777/jules-delegation-connectors/issues"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/",
+    "templates/",
+    "examples/",
+    "docs/",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE"
+  ]
+}

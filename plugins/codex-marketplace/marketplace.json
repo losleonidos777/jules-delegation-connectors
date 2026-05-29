@@ -1,0 +1,20 @@
+{
+  "name": "local-jules-delegate-plugins",
+  "interface": {
+    "displayName": "Local Jules Delegate Plugins"
+  },
+  "plugins": [
+    {
+      "name": "jules-delegate",
+      "source": {
+        "source": "local",
+        "path": "../codex-jules-delegate"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
