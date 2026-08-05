@@ -1,49 +1,80 @@
 #!/usr/bin/env node
 import { parseArgs, flagNumber, flagString } from '../src/args.mjs';
-import { JulesApi, sessionName } from '../src/jules-api.mjs';
+import { JulesApi, normalizeEnvValue, sessionName } from '../src/jules-api.mjs';
 import { formatActivities, formatSession, formatSessions, formatSources } from '../src/format.mjs';
-import { assertBranchAllowed, defaultBranch, resolveSource } from '../src/source-resolver.mjs';
+import { assertBranchAllowed, defaultBranch, findSource, inferRepoFromGit, normalizeRepo, resolveSource } from '../src/source-resolver.mjs';
 import { LocalState } from '../src/state.mjs';
-import { enforcePromptChecklist, taskTemplate } from '../src/prompt-template.mjs';
-import { extractPatches, formatPlan, latestPatch, latestPlan, STOP_STATES, summarizeResult } from '../src/extract.mjs';
+import { enforcePromptChecklist, reviewTaskTemplate, taskTemplate } from '../src/prompt-template.mjs';
+import {
+  extractBashOutputs,
+  extractChangedFiles,
+  extractPatches,
+  findFileDiff,
+  formatBashOutputs,
+  formatChangedFiles,
+  formatPlan,
+  latestPatch,
+  latestPlan,
+  STOP_STATES,
+  summarizeResult
+} from '../src/extract.mjs';
 import { formatError, UserInputError } from '../src/errors.mjs';
 import { print, readTextFileOrStdin, writeJson } from '../src/io.mjs';
+import { VERSION } from '../src/version.mjs';
+import { inspectJulesCli } from '../src/system.mjs';
 
-const USAGE = `jules-delegate: delegate scoped GitHub coding tasks to Google Jules
+const USAGE = `jules-delegate ${VERSION}: delegate scoped GitHub coding tasks to Google Jules
 
 Usage:
+  jules-delegate --version
+  jules-delegate doctor [--repo owner/repo] [--json]  # repo inferred from origin when omitted
   jules-delegate sources [--repo owner/repo] [--json]
-  jules-delegate sessions [--json]
-  jules-delegate create --repo owner/repo --branch main --title "..." --prompt-file task.md [--auto-pr] [--json]
+  jules-delegate sessions [--page-size 30] [--json]
+  jules-delegate create [--repo owner/repo | --source sources/... | --repoless] [--branch main] --title "..." --prompt-file task.md [--auto-pr] [--json]
+  jules-delegate review [--repo owner/repo] [--branch main] [--require-plan] [--json]
   jules-delegate get <session-id> [--json]
-  jules-delegate activities <session-id> [--json]
+  jules-delegate activities <session-id> [--since RFC3339] [--json]
+  jules-delegate activity <session-id> <activity-id> [--json]
   jules-delegate watch <session-id> [--interval 5] [--max-polls 120] [--json]
   jules-delegate plan <session-id> [--json]
   jules-delegate approve <session-id>
   jules-delegate tell <session-id> --message-file feedback.md
   jules-delegate result <session-id> [--json]
+  jules-delegate bash <session-id> [--output-limit 4000] [--json]
+  jules-delegate files <session-id> [--json]
+  jules-delegate diff <session-id> --file path/to/file [--output file.patch] [--json]
   jules-delegate patch <session-id> [--all] [--output jules.patch]
+  jules-delegate delete <session-id> --yes
   jules-delegate template [--repo owner/repo] [--branch main] [--goal "..."]
 
 Defaults:
-  --require-plan is true unless --no-require-plan is passed.
+  --require-plan is true for implementation sessions unless --no-require-plan is passed.
+  review sends a no-edit/no-PR instruction and does not require plan approval unless --require-plan is passed; always inspect returned artifacts.
   Local state is stored in .jules-orchestrator unless JULES_STATE_DIR is set.
 `;
 
 async function main(argv) {
   const { positional, flags } = parseArgs(argv);
   const command = positional[0];
+
+  if (flags.version || command === 'version') {
+    print(VERSION);
+    return;
+  }
   if (!command || flags.help || command === 'help' || command === '--help') {
     print(USAGE);
     return;
   }
-
   if (command === 'template') {
     print(taskTemplate({
       repo: flagString(flags, 'repo', 'owner/repo'),
       branch: flagString(flags, 'branch', 'main'),
       goal: flagString(flags, 'goal', 'Describe the precise coding task here.')
     }));
+    return;
+  }
+  if (command === 'doctor') {
+    await cmdDoctor(flags);
     return;
   }
 
@@ -60,11 +91,17 @@ async function main(argv) {
     case 'create':
       await cmdCreate(api, state, flags);
       return;
+    case 'review':
+      await cmdReview(api, state, flags);
+      return;
     case 'get':
       await cmdGet(api, flags, positional[1]);
       return;
     case 'activities':
       await cmdActivities(api, flags, positional[1]);
+      return;
+    case 'activity':
+      await cmdActivity(api, flags, positional[1], positional[2]);
       return;
     case 'watch':
       await cmdWatch(api, state, flags, positional[1]);
@@ -81,21 +118,109 @@ async function main(argv) {
     case 'result':
       await cmdResult(api, flags, positional[1]);
       return;
+    case 'bash':
+      await cmdBash(api, flags, positional[1]);
+      return;
+    case 'files':
+      await cmdFiles(api, flags, positional[1]);
+      return;
+    case 'diff':
+      await cmdDiff(api, flags, positional[1]);
+      return;
     case 'patch':
       await cmdPatch(api, state, flags, positional[1]);
       return;
     case 'delete':
-      await cmdDelete(api, positional[1]);
+      await cmdDelete(api, flags, positional[1]);
       return;
     default:
       throw new UserInputError(`Unknown command: ${command}\n\n${USAGE}`);
   }
 }
 
+async function cmdDoctor(flags) {
+  const key = normalizeEnvValue(process.env.JULES_API_KEY);
+  const baseUrl = normalizeEnvValue(process.env.JULES_API_BASE_URL) || 'https://jules.googleapis.com/v1alpha';
+  const state = new LocalState({ stateDir: flagString(flags, 'stateDir') || process.env.JULES_STATE_DIR });
+  const officialCli = await inspectJulesCli();
+  const report = {
+    ok: true,
+    connectorVersion: VERSION,
+    nodeVersion: process.versions.node,
+    nodeSupported: Number(process.versions.node.split('.')[0]) >= 20,
+    apiKeyConfigured: Boolean(key),
+    apiBaseUrl: baseUrl,
+    apiBaseUrlValid: true,
+    stateDir: state.stateDir,
+    stateWritable: false,
+    apiReachable: false,
+    connectedSourceCount: 0,
+    officialCli
+  };
+
+  report.ok &&= report.nodeSupported;
+  try {
+    const url = new URL(baseUrl);
+    report.apiBaseUrlValid = ['https:', 'http:'].includes(url.protocol);
+  } catch {
+    report.apiBaseUrlValid = false;
+  }
+  report.ok &&= report.apiBaseUrlValid;
+
+  try {
+    await state.ensure();
+    report.stateWritable = true;
+  } catch (error) {
+    report.stateError = error.message;
+  }
+  report.ok &&= report.stateWritable;
+
+  if (!key) {
+    report.ok = false;
+    report.apiError = 'JULES_API_KEY is not configured.';
+  } else if (report.apiBaseUrlValid) {
+    try {
+      const api = new JulesApi({ apiKey: key, baseUrl });
+      const sources = await api.listSources();
+      report.apiReachable = true;
+      report.connectedSourceCount = sources.length;
+      const explicitRepo = flagString(flags, 'repo');
+      const repo = explicitRepo || await inferRepoFromGit();
+      if (repo) {
+        const normalized = normalizeRepo(repo);
+        const source = findSource(sources, normalized);
+        report.requestedRepo = normalized;
+        report.requestedRepoSource = explicitRepo ? 'argument' : 'git-origin';
+        report.requestedRepoConnected = Boolean(source);
+        if (source) report.requestedSource = source.name;
+        report.ok &&= Boolean(source);
+      }
+    } catch (error) {
+      report.apiError = formatError(error);
+      report.ok = false;
+    }
+  }
+
+  if (flags.json) writeJson(report);
+  else {
+    print(`connector: ${report.connectorVersion}`);
+    print(`node: ${report.nodeVersion} (${report.nodeSupported ? 'ok' : 'requires Node 20+'})`);
+    print(`api key: ${report.apiKeyConfigured ? 'configured' : 'missing'}`);
+    print(`api base URL: ${report.apiBaseUrlValid ? 'valid' : 'invalid'} (${report.apiBaseUrl})`);
+    print(`state directory: ${report.stateWritable ? 'writable' : 'not writable'} (${report.stateDir})`);
+    print(`Jules API: ${report.apiReachable ? `reachable; ${report.connectedSourceCount} source(s)` : 'not verified'}`);
+    print(`official Jules CLI: ${report.officialCli.available ? (report.officialCli.version || 'available') : 'not installed (optional)'}`);
+    if (report.requestedRepo) print(`repo ${report.requestedRepo}: ${report.requestedRepoConnected ? 'connected' : 'not connected'}`);
+    if (report.apiError) print(`diagnostic: ${report.apiError}`);
+    print(report.ok ? 'doctor: PASS' : 'doctor: FAIL');
+  }
+  if (!report.ok) process.exitCode = 1;
+}
+
 async function cmdSources(api, flags) {
   const sources = await api.listSources();
   const repo = flagString(flags, 'repo');
-  const filtered = repo ? sources.filter(source => `${source.githubRepo?.owner}/${source.githubRepo?.repo}`.toLowerCase() === repo.toLowerCase()) : sources;
+  const filtered = repo ? sources.filter(source => findSource([source], normalizeRepo(repo))) : sources;
   if (flags.json) {
     writeJson(filtered);
     return;
@@ -114,21 +239,31 @@ async function cmdSessions(api, flags) {
 }
 
 async function cmdCreate(api, state, flags) {
-  const repo = flagString(flags, 'repo');
+  let repo = flagString(flags, 'repo');
   const sourceSelector = flagString(flags, 'source');
+  if (!repo && !sourceSelector && !flags.repoless) repo = await inferRepoFromGit();
   const title = flagString(flags, 'title');
   const promptFile = flagString(flags, 'promptFile');
   const inlinePrompt = flagString(flags, 'prompt');
   const prompt = inlinePrompt || await readTextFileOrStdin(promptFile);
   if (!prompt) throw new UserInputError('Provide --prompt "..." or --prompt-file task.md (use --prompt-file - for stdin).');
 
-  const { name: sourceName, source } = await resolveSource(api, { repo, source: sourceSelector });
-  const branch = flagString(flags, 'branch', defaultBranch(source));
-  assertBranchAllowed(source, branch, { skipBranchCheck: Boolean(flags.skipBranchCheck) });
-
   const missing = enforcePromptChecklist(prompt);
   if (missing.length && !flags.skipPromptChecklist) {
-    throw new UserInputError(`Prompt is missing recommended sections: ${missing.join(', ')}. Use templates/jules-task.md or pass --skip-prompt-checklist.`);
+    throw new UserInputError(`Prompt is missing required sections: ${missing.join(', ')}. Use templates/jules-task.md or pass --skip-prompt-checklist.`);
+  }
+
+  let sourceName;
+  let source;
+  let branch;
+  if (flags.repoless) {
+    if (repo || sourceSelector || flagString(flags, 'branch') || flags.autoPr) {
+      throw new UserInputError('--repoless cannot be combined with --repo, --source, --branch, or --auto-pr.');
+    }
+  } else {
+    ({ name: sourceName, source } = await resolveSource(api, { repo, source: sourceSelector }));
+    branch = flagString(flags, 'branch', defaultBranch(source));
+    assertBranchAllowed(source, branch, { skipBranchCheck: Boolean(flags.skipBranchCheck) });
   }
 
   const session = await api.createSession({
@@ -140,17 +275,47 @@ async function cmdCreate(api, state, flags) {
     autoCreatePr: Boolean(flags.autoPr)
   });
 
-  await state.upsertSession(session, { repo: repo || sourceSelector, branch, source: sourceName, autoCreatePr: Boolean(flags.autoPr) });
+  await state.upsertSession(session, {
+    repo: repo || sourceSelector,
+    branch,
+    source: sourceName,
+    repoless: Boolean(flags.repoless),
+    autoCreatePr: Boolean(flags.autoPr)
+  });
   if (flags.savePrompt !== false) await state.savePrompt(session.name || session.id, prompt);
 
-  if (flags.json) {
-    writeJson(session);
-  } else {
+  if (flags.json) writeJson(session);
+  else {
     print(formatSession(session));
     print('');
     print('Next:');
     print(`  jules-delegate watch ${session.name || session.id}`);
     print(`  jules-delegate plan ${session.name || session.id}`);
+  }
+}
+
+async function cmdReview(api, state, flags) {
+  const repo = flagString(flags, 'repo') || await inferRepoFromGit();
+  if (!repo) throw new UserInputError('Could not infer a GitHub repository from origin; pass --repo owner/repo.');
+  const { name: sourceName, source } = await resolveSource(api, { repo });
+  const branch = flagString(flags, 'branch', defaultBranch(source));
+  assertBranchAllowed(source, branch, { skipBranchCheck: Boolean(flags.skipBranchCheck) });
+  const prompt = reviewTaskTemplate({ repo: normalizeRepo(repo), branch });
+  const session = await api.createSession({
+    prompt,
+    title: flagString(flags, 'title', `Repository review: ${normalizeRepo(repo)}`),
+    source: sourceName,
+    branch,
+    requirePlanApproval: flags.requirePlan === true,
+    autoCreatePr: false
+  });
+  await state.upsertSession(session, { repo: normalizeRepo(repo), branch, source: sourceName, reviewOnly: true, autoCreatePr: false });
+  await state.savePrompt(session.name || session.id, prompt);
+  if (flags.json) writeJson(session);
+  else {
+    print(formatSession(session));
+    print('Review request guardrails: Jules was instructed not to edit, commit, create branches, or open a PR. Inspect returned artifacts before trusting that constraint.');
+    print(`Next: jules-delegate watch ${session.name || session.id}`);
   }
 }
 
@@ -163,9 +328,20 @@ async function cmdGet(api, flags, id) {
 
 async function cmdActivities(api, flags, id) {
   requireSession(id);
-  const activities = await api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) });
+  const activities = await api.listActivities(id, {
+    pageSize: flagNumber(flags, 'pageSize', 100),
+    since: flagString(flags, 'since')
+  });
   if (flags.json) writeJson(activities);
   else print(formatActivities(activities));
+}
+
+async function cmdActivity(api, flags, sessionId, activityId) {
+  requireSession(sessionId);
+  if (!activityId) throw new UserInputError('Activity id is required.');
+  const activity = await api.getActivity(sessionId, activityId);
+  if (flags.json) writeJson(activity);
+  else writeJson(activity);
 }
 
 async function cmdWatch(api, state, flags, id) {
@@ -229,8 +405,6 @@ async function cmdTell(api, flags, id) {
   await waitForStateChange(api, id, 'AWAITING_USER_FEEDBACK');
 }
 
-// Jules has eventual consistency on state transitions after approve/sendMessage.
-// Without this, a `watch` invocation immediately after will see stale state and exit.
 async function waitForStateChange(api, id, fromState, { timeoutMs = 20000, intervalMs = 2000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -239,7 +413,7 @@ async function waitForStateChange(api, id, fromState, { timeoutMs = 20000, inter
       const session = await api.getSession(id);
       if (session.state !== fromState) return session.state;
     } catch {
-      // ignore transient errors
+      // Ignore transient errors while waiting for eventual consistency.
     }
   }
   return null;
@@ -247,9 +421,59 @@ async function waitForStateChange(api, id, fromState, { timeoutMs = 20000, inter
 
 async function cmdResult(api, flags, id) {
   requireSession(id);
-  const [session, activities] = await Promise.all([api.getSession(id), api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) })]);
+  const [session, activities] = await Promise.all([
+    api.getSession(id),
+    api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) })
+  ]);
   if (flags.json) writeJson({ session, activities });
   else print(summarizeResult(session, activities));
+}
+
+async function cmdBash(api, flags, id) {
+  requireSession(id);
+  const activities = await api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) });
+  const outputs = extractBashOutputs(activities);
+  if (flags.json) writeJson(outputs);
+  else print(formatBashOutputs(outputs, { outputLimit: flagNumber(flags, 'outputLimit', 4000) }));
+}
+
+async function cmdFiles(api, flags, id) {
+  requireSession(id);
+  const activities = await api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) });
+  const files = extractChangedFiles(activities);
+  if (flags.json) writeJson(files);
+  else print(formatChangedFiles(files));
+}
+
+async function cmdDiff(api, flags, id) {
+  requireSession(id);
+  const filePath = flagString(flags, 'file');
+  if (!filePath) throw new UserInputError('Provide --file path/to/file for the exact repository-relative path.');
+  const activities = await api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) });
+  const file = findFileDiff(activities, filePath);
+  if (!file) throw new UserInputError(`No Jules diff found for ${filePath}. Run 'jules-delegate files ${sessionName(id)}' first.`);
+  if (flags.json) {
+    writeJson(file);
+    return;
+  }
+  const output = flagString(flags, 'output');
+  if (output) {
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(output, file.unidiffPatch, 'utf8');
+    print(`Wrote ${Buffer.byteLength(file.unidiffPatch, 'utf8')} bytes to ${output}`);
+    return;
+  }
+  process.stdout.write(file.unidiffPatch);
+  if (!file.unidiffPatch.endsWith('\n')) process.stdout.write('\n');
+}
+
+async function cmdDelete(api, flags, id) {
+  requireSession(id);
+  if (flags.yes !== true) {
+    throw new UserInputError('delete is destructive; pass --yes to confirm the exact session id');
+  }
+  await api.deleteSession(id);
+  print(`Deleted ${sessionName(id)}.`);
 }
 
 async function cmdPatch(api, state, flags, id) {
@@ -257,7 +481,7 @@ async function cmdPatch(api, state, flags, id) {
   const activities = await api.listActivities(id, { pageSize: flagNumber(flags, 'pageSize', 100) });
   const patches = extractPatches(activities);
   if (!patches.length) throw new UserInputError('No non-empty gitPatch.unidiffPatch artifacts found in activities.');
-  const patchText = flags.all ? patches.map(p => p.unidiffPatch).join('\n') : latestPatch(activities).unidiffPatch;
+  const patchText = flags.all ? patches.map(patch => patch.unidiffPatch).join('\n') : latestPatch(activities).unidiffPatch;
   const output = flagString(flags, 'output');
   if (output) {
     const fs = await import('node:fs/promises');
@@ -270,12 +494,6 @@ async function cmdPatch(api, state, flags, id) {
     process.stdout.write(patchText);
     if (!patchText.endsWith('\n')) process.stdout.write('\n');
   }
-}
-
-async function cmdDelete(api, id) {
-  requireSession(id);
-  await api.deleteSession(id);
-  print(`Deleted ${sessionName(id)}.`);
 }
 
 function requireSession(id) {

@@ -3,9 +3,13 @@
     "jules": {
       "type": "stdio",
       "command": "node",
-      "args": ["/absolute/path/to/jules-delegation-connectors/bin/jules-mcp.mjs"],
+      "args": [
+        "/absolute/path/to/jules-delegation-connectors/bin/jules-mcp.mjs"
+      ],
       "env": {
-        "JULES_API_KEY": "${JULES_API_KEY}"
+        "JULES_API_KEY": "${JULES_API_KEY:-}",
+        "JULES_API_BASE_URL": "${JULES_API_BASE_URL:-https://jules.googleapis.com/v1alpha}",
+        "JULES_STATE_DIR": "${JULES_STATE_DIR:-.jules-orchestrator}"
       }
     }
   }

@@ -6,13 +6,14 @@ export class UserInputError extends Error {
 }
 
 export class JulesApiError extends Error {
-  constructor(message, { status, body, url, method } = {}) {
-    super(message);
+  constructor(message, { status, body, url, method, retryable = false, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
     this.name = 'JulesApiError';
     this.status = status;
     this.body = redactObject(body);
     this.url = url;
     this.method = method;
+    this.retryable = Boolean(retryable);
   }
 }
 
@@ -22,7 +23,7 @@ export function formatError(error) {
   if (error.status) out += `\nHTTP status: ${error.status}`;
   if (error.method && error.url) out += `\nRequest: ${error.method} ${error.url}`;
   if (error.body) out += `\nResponse: ${redactSecrets(error.body)}`;
-  return out;
+  return redactSecrets(out);
 }
 
 export function redactSecrets(input) {
@@ -30,6 +31,8 @@ export function redactSecrets(input) {
   let text = typeof input === 'string' ? input : JSON.stringify(input, null, 2);
 
   text = text.replace(/-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]+?-----END [^-]+ PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]');
+  text = text.replace(/\bAQ\.[A-Za-z0-9_-]{20,}\b/g, '[REDACTED]');
+  text = text.replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '[REDACTED]');
 
   const patterns = [
     /(JULES_API_KEY\s*[=:]\s*)[^\s"']+/gi,

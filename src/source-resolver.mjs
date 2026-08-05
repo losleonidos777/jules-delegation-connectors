@@ -1,11 +1,33 @@
+import { execFile as nodeExecFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { UserInputError } from './errors.mjs';
+
+const execFile = promisify(nodeExecFile);
 
 export function normalizeRepo(repo) {
   if (!repo) return undefined;
-  const trimmed = String(repo).trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '');
+  const trimmed = String(repo)
+    .trim()
+    .replace(/^git@github\.com:/i, '')
+    .replace(/^ssh:\/\/git@github\.com\//i, '')
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '');
   const parts = trimmed.split('/').filter(Boolean);
   if (parts.length !== 2) throw new UserInputError(`Repository must be in owner/repo form; got: ${repo}`);
   return `${parts[0]}/${parts[1]}`;
+}
+
+export async function inferRepoFromGit({ cwd = process.cwd(), execFileImpl = execFile } = {}) {
+  try {
+    const result = await execFileImpl('git', ['config', '--get', 'remote.origin.url'], { cwd, encoding: 'utf8' });
+    const stdout = typeof result === 'string' ? result : result?.stdout;
+    if (!String(stdout || '').trim()) return undefined;
+    return normalizeRepo(stdout);
+  } catch {
+    return undefined;
+  }
 }
 
 export function sourceRepo(source) {
@@ -20,20 +42,29 @@ export function sourceLabel(source) {
 
 export function sourceMatches(source, selector) {
   if (!source || !selector) return false;
-  const s = String(selector).trim();
-  if (source.name === s || source.id === s) return true;
-  return sourceRepo(source)?.toLowerCase() === s.toLowerCase();
+  const raw = String(selector).trim();
+  if (source.name === raw || source.id === raw) return true;
+  let normalized;
+  try {
+    normalized = normalizeRepo(raw);
+  } catch {
+    normalized = raw;
+  }
+  return sourceRepo(source)?.toLowerCase() === String(normalized).toLowerCase();
 }
 
 export function findSource(sources, selector) {
   if (!selector) return undefined;
-  return sources.find(source => sourceMatches(source, selector));
+  return (sources || []).find(source => sourceMatches(source, selector));
 }
 
 export async function resolveSource(api, { repo, source }) {
-  if (source && String(source).startsWith('sources/')) return { name: source, source: undefined, allSources: undefined };
+  if (source && String(source).startsWith('sources/')) {
+    const exact = await api.getSource(source);
+    return { name: exact.name || source, source: exact, allSources: undefined };
+  }
 
-  const selector = source || repo;
+  const selector = source || (repo ? normalizeRepo(repo) : undefined);
   if (!selector) throw new UserInputError('Provide --repo owner/repo or --source sources/...');
 
   const sources = await api.listSources();
@@ -50,12 +81,12 @@ export async function resolveSource(api, { repo, source }) {
 
 export function branchNames(source) {
   return (source?.githubRepo?.branches || [])
-    .map(branch => branch?.displayName)
+    .map(branch => branch?.displayName || branch?.name)
     .filter(Boolean);
 }
 
 export function defaultBranch(source) {
-  return source?.githubRepo?.defaultBranch?.displayName || 'main';
+  return source?.githubRepo?.defaultBranch?.displayName || source?.githubRepo?.defaultBranch?.name || 'main';
 }
 
 export function assertBranchAllowed(source, branch, { skipBranchCheck = false } = {}) {

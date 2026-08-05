@@ -1,94 +1,86 @@
 # Contributing
 
-Thanks for helping improve the Jules delegation connectors. This guide is short on purpose — read it once, then read the code.
+Thanks for helping improve Jules Delegation Connectors. The project intentionally stays small, auditable, and dependency-free at runtime.
 
-## Ground rules
-
-1. **Zero runtime dependencies.** This package must stay installable with just Node 20+. If you reach for an npm dependency, stop and find another way. Tests use only `node:test` and `node:assert`.
-2. **Jules REST is alpha.** All HTTP shape knowledge lives in `src/jules-api.mjs`. Do not let alpha-shape parsing leak into commands, formatters, MCP tools, or skills.
-3. **Plan approval gate stays on by default.** Any change that would auto-approve a plan, auto-create a PR, or skip the prompt checklist must be opt-in and called out in the changelog.
-4. **No secrets in prompts, ever.** Do not add code paths that move tokens, API keys, or credentials into Jules `prompt`, `sendMessage`, or task templates.
-
-## Dev setup
+## Development setup
 
 ```bash
 git clone https://github.com/losleonidos777/jules-delegation-connectors
 cd jules-delegation-connectors
-node --version   # must be >= 20
+node --version   # Node 20+
+npm run check
+```
 
-# Offline checks
-npm test                  # unit tests, no network
-npm run smoke:cli         # CLI --help renders
-npm run smoke:mcp         # MCP stdio handshake + tools/list
+Live checks require a Jules API key and a repository already connected in Jules:
 
-# Live checks (require a real Jules API key)
+```bash
 export JULES_API_KEY="..."
 npm run smoke:mcp:live
-node ./bin/jules-delegate.mjs sources
+npm run live:review -- owner/repo main
 ```
+
+Never commit a key or paste it into a task prompt.
+
+## Design rules
+
+1. **Zero runtime dependencies.** Use Node.js built-ins. Development-only dependencies also require a clear reason.
+2. **Keep API drift isolated.** Jules REST paths, payloads, pagination, retry policy, and transport details belong in `src/jules-api.mjs`.
+3. **Keep safe defaults.** Plan approval stays enabled for implementation sessions. Auto-PR remains explicit and opt-in.
+4. **Never retry writes automatically.** Creating a session, approving a plan, and sending feedback are not safely idempotent.
+5. **Keep MCP outputs bounded.** Return concise structured snapshots; expose large patches and validation logs through dedicated tools.
+6. **Do not write logs to MCP stdout.** Stdio stdout is reserved for newline-delimited JSON-RPC.
+7. **Do not put secrets in prompts, state, logs, tests, examples, commits, issues, or PRs.**
 
 ## Repository layout
 
-```
-bin/                     # CLI + MCP entrypoints (Node 20 ESM, no deps)
-src/                     # connector implementation
-src/jules-api.mjs        # isolated REST client — only file that knows alpha shapes
-src/mcp-tools.mjs        # MCP tool schemas + dispatch
-src/extract.mjs          # plan / patch / agent-message / PR extraction
-src/source-resolver.mjs  # owner/repo → sources/... + branch validation
-src/state.mjs            # .jules-orchestrator/* local state and prompt/patch persistence
-src/prompt-template.mjs  # task-template generator + checklist enforcement
-src/format.mjs, args.mjs, errors.mjs, io.mjs
-docs/API_NOTES.md        # real-API observations and MCP semantics
-test/                    # node:test offline tests, must not call Google APIs
-scripts/smoke-*.mjs      # smoke tests (smoke-mcp.mjs offline, smoke-mcp-toolcalls.mjs live)
-templates/jules-task.md  # canonical Jules task structure
-.claude/skills/...       # drop-in Claude Code skill copy
-.agents/skills/...       # drop-in Codex skill copy
-plugins/claude-jules-delegate/  # shareable Claude Code plugin
-plugins/codex-jules-delegate/   # shareable Codex plugin
-plugins/codex-marketplace/      # local Codex marketplace manifest for plugin testing
-examples/                # plug-and-play config snippets for MCP wiring
+```text
+bin/                              CLI and MCP entrypoints
+src/                              connector implementation
+scripts/                          smoke tests, live helper, plugin sync
+examples/                         client configuration examples
+templates/                        canonical task prompt
+.claude/skills/                   standalone Claude Code skill
+.agents/skills/                   standalone Codex skill
+plugins/claude-jules-delegate/    self-contained Claude Code plugin
+plugins/codex-jules-delegate/     self-contained Codex plugin
+test/                             offline node:test suite
+docs/                             API notes and compatibility reviews
 ```
 
-## The source-duplication invariant (read this before editing plugins)
+## Root/plugin synchronization
 
-Each plugin folder under `plugins/` currently carries its own copy of `bin/` and `src/` so that the plugin is self-contained when installed. **The plugin copies must be byte-identical to the root copies.** When you change anything under `src/` or `bin/`, mirror it into both:
+The Claude and Codex plugin folders include self-contained copies of `bin/` and `src/`. Edit the root copies only, then run:
 
+```bash
+npm run sync:plugins
+npm run check:plugins
 ```
-plugins/claude-jules-delegate/{bin,src}/
-plugins/codex-jules-delegate/{bin,src}/
-```
 
-A future change will consolidate this with a `scripts/sync-plugins.mjs` build step. Until then, the rule is "edit three places".
+`check:plugins` fails if any mirrored file differs from root. Do not hand-edit a mirrored copy unless you immediately synchronize all copies.
 
-## How to add a CLI subcommand
+## Adding a CLI command
 
-1. Add a `cmdYourCommand(api, state, flags, positional)` async handler near the others in `bin/jules-delegate.mjs`.
-2. Add the `case 'your-command':` branch to the `main()` dispatch.
-3. Extend the `USAGE` constant with a one-line synopsis.
-4. If the command persists data, route through `LocalState` instead of writing directly.
-5. Mirror `bin/jules-delegate.mjs` into the two plugin folders.
+1. Add the command to `bin/jules-delegate.mjs` usage and dispatch.
+2. Keep REST access inside `JulesApi`.
+3. Validate user input with `UserInputError`.
+4. Redact failures before printing.
+5. Add offline tests and documentation.
+6. Run `npm run sync:plugins` and `npm run check`.
 
-## How to add an MCP tool
+## Adding an MCP tool
 
-1. Append the schema to the `TOOLS` array in `src/mcp-tools.mjs`. Required and optional argument fields must be reflected in `inputSchema`.
-2. Add the `case 'jules_your_tool':` branch to `callTool` and return `{ text, data }`. `text` is human-readable, `data` is structured (becomes `result.structuredContent` on the wire).
-3. Make sure errors thrown by your branch are still caught by `bin/jules-mcp.mjs::tools/call` — they will surface as `result.isError = true` per MCP spec.
-4. Mirror `src/mcp-tools.mjs` into the two plugin folders.
+1. Add the schema to `TOOLS` in `src/mcp-tools.mjs`.
+2. Set accurate MCP annotations.
+3. Add `_meta["anthropic/requiresUserInteraction"]` for mutating operations.
+4. Add a bounded-output strategy for large data.
+5. Implement the dispatch case and tests.
+6. Update client approval examples when the tool changes the read/write surface.
 
-## How to test
+## Release checklist
 
-- **Unit:** `npm test`. Add a `test/<topic>.test.mjs` that mocks `fetch` via the `fetchImpl` option on `JulesApi` — do not call Google in tests.
-- **CLI smoke:** `npm run smoke:cli`.
-- **MCP offline smoke:** `npm run smoke:mcp` — fakes `JULES_API_KEY`, asserts handshake + tools list.
-- **MCP live smoke:** `npm run smoke:mcp:live` — requires a real `JULES_API_KEY`. Optionally pass a known session id: `node ./scripts/smoke-mcp-toolcalls.mjs sessions/<id>`.
-
-Before opening a PR, run all four. The live smoke consumes one read each from `sources` and `sessions`.
-
-## Commits and PRs
-
-- Keep PRs scoped to one concern. Refactors and behaviour changes do not belong together.
-- Mention in the PR body which plugin folders you mirrored to.
-- Bump `version` in `package.json`, `plugins/claude-jules-delegate/.claude-plugin/plugin.json`, and `plugins/codex-jules-delegate/.codex-plugin/plugin.json` together. Add a `CHANGELOG.md` entry.
-- Do not commit `.jules-orchestrator/` content; it is gitignored.
+- Update `VERSION`, `package.json`, both plugin manifests, and `CHANGELOG.md` together.
+- Run `npm run sync:plugins`.
+- Run `npm run check` on Node 20 or later.
+- Run live read-only smoke tests with a non-production key when possible.
+- Review the diff for generated state, prompts, logs, patches, and credentials.
+- Describe compatibility changes and manual test steps in the PR.

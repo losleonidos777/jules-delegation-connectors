@@ -7,30 +7,31 @@ owner/repo
 main
 
 ## Goal
-Fix the bug where login returns 500 when the user has no avatar.
+Describe one precise implementation outcome.
 
 ## Scope
-Only touch authentication/profile loading code and related tests.
+- List the directories, files, modules, or behavior Jules may change.
+- Keep the diff focused and avoid unrelated cleanup.
 
 ## Constraints
-- Do not change DB schema.
-- Do not introduce new dependencies.
-- Preserve existing public API behavior.
-- Do not include secrets, credentials, tokens, or customer data in code, tests, logs, or comments.
+- Preserve public API behavior unless the acceptance criteria explicitly require a change.
+- Do not add dependencies without approval.
+- Do not access or request secrets, credentials, tokens, or private customer data.
+- Follow repository instructions in AGENTS.md, CLAUDE.md, README, and contributing documentation.
 
 ## Acceptance criteria
-- Login succeeds for users with and without avatar.
-- Existing login tests still pass.
-- Add regression test for missing avatar.
+- Add concrete pass/fail requirements.
+- Add regression tests for bug fixes.
+- Keep existing supported runtimes and clients working.
 
 ## Validation commands
-npm test -- auth
-npm run lint
+- npm test
+- npm run check
 
 ## Out of scope
-- UI redesign.
-- Session/token model changes.
-- Database migrations.
+- Architectural rewrites.
+- Unrelated refactors or formatting sweeps.
+- Database, infrastructure, or release changes unless explicitly requested.
 
 ## PR policy
-Generate a PR only if the orchestrator passed `--auto-pr` / `autoCreatePr: true`. Never merge.
+Create a PR only if the orchestrator explicitly enabled auto-PR. Never merge.

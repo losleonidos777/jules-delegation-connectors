@@ -1,7 +1,4 @@
-# Local runtime state — sessions, prompts, patches, logs.
-# This is reproduced from API calls and from the user's own task files.
-# Never commit it: it can contain task-specific prompts, repo names, and
-# session URLs from delegation work.
+# Local runtime state: sessions, prompts, patches, and logs.
 .jules-orchestrator/
 
 # Secrets

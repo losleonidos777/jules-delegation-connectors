@@ -1,23 +1,32 @@
-# Jules delegation policy for Codex and Claude-like coding agents
+# Jules delegation policy for coding agents
 
-Use Jules as an asynchronous implementer, not as an uncontrolled supervisor.
+Use Jules as a scoped asynchronous implementer or reviewer. The local agent remains responsible for repository inspection, task design, human approvals, validation, and final review.
 
-Delegate to Jules when all of these are true:
+## Before delegating
 
-- The task is scoped to a repository and branch already connected to Jules.
-- The expected diff is small or moderate: bug fix, tests, docs, dependency bump, narrow refactor.
-- The task can be expressed with concrete acceptance criteria and validation commands.
-- No secrets or private customer data must be included in the prompt.
+1. Run `jules-delegate doctor --repo owner/repo` or call `jules_list_sources`.
+2. Confirm the exact repository, base branch, allowed scope, acceptance criteria, validation commands, and PR policy.
+3. Exclude secrets, credentials, private customer data, and unrelated files.
+4. Prefer small or medium tasks with objective pass/fail criteria.
 
-Do not delegate when the task is broad, ambiguous, requires architectural ownership, requires secret access, or requires immediate local context not available to Jules.
+## Safe implementation flow
 
-Default workflow:
+1. Create a structured prompt using `templates/jules-task.md`.
+2. Create the session with plan approval enabled.
+3. Stop at `AWAITING_PLAN_APPROVAL` and show the plan to the human.
+4. Approve only after explicit human authorization.
+5. Stop at `AWAITING_USER_FEEDBACK`, `FAILED`, `PAUSED`, or `COMPLETED`.
+6. Retrieve the compact result, validation output, and patch separately.
+7. Review and test locally before accepting or merging any PR.
 
-1. Run `jules-delegate sources` or `jules_list_sources` to verify the repository source.
-2. Write a structured task with goal, repo, branch, scope, constraints, acceptance criteria, validation commands, out-of-scope, and PR policy.
-3. Create the session with plan approval required.
-4. Watch until plan approval or user feedback is needed.
-5. Show the plan to the human and wait for explicit approval before calling approve.
-6. After completion, fetch result and patch, then summarize PR URL, touched areas, validation, risks, and manual review steps.
+## No-edit review request flow
 
-Never merge a Jules PR automatically.
+Use `jules-delegate review --repo owner/repo --branch main` for a code/documentation review. The review prompt requests no edits, commits, branches, or PRs. Treat this as an instruction rather than a hard sandbox and inspect all returned artifacts.
+
+## Guardrails
+
+- Never enable auto-PR unless explicitly requested.
+- Never merge a Jules PR automatically.
+- Never send secrets in prompts or feedback.
+- Never claim validation passed without command evidence.
+- Never treat a completed Jules session as equivalent to merged or production-ready code.

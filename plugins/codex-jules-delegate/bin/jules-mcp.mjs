@@ -1,25 +1,27 @@
 #!/usr/bin/env node
 import { TOOLS, callTool } from '../src/mcp-tools.mjs';
 import { formatError, redactSecrets } from '../src/errors.mjs';
+import { LATEST_MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSIONS, VERSION } from '../src/version.mjs';
 
-const SERVER_INFO = { name: 'jules-delegate-mcp', version: '0.1.0' };
-const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
-const framing = process.env.MCP_FRAMING || 'newline';
+const SERVER_INFO = { name: 'jules-delegate-mcp', version: VERSION };
 let buffer = '';
 let draining = false;
 let pendingDrain = false;
-let inflight = 0;
 let stdinEnded = false;
+let initialized = false;
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => {
   buffer += chunk;
   scheduleDrain();
 });
-
 process.stdin.on('end', () => {
   stdinEnded = true;
-  maybeExit();
+  if (buffer.trim()) buffer += '\n';
+  scheduleDrain();
+});
+process.stdin.on('error', error => {
+  process.stderr.write(`${redactSecrets(formatError(error))}\n`);
 });
 
 function scheduleDrain() {
@@ -29,9 +31,7 @@ function scheduleDrain() {
   }
   draining = true;
   drainBuffer()
-    .catch(error => {
-      sendError(null, -32603, redactSecrets(formatError(error)));
-    })
+    .catch(error => process.stderr.write(`${redactSecrets(formatError(error))}\n`))
     .finally(() => {
       draining = false;
       if (pendingDrain) {
@@ -44,84 +44,72 @@ function scheduleDrain() {
 }
 
 function maybeExit() {
-  if (stdinEnded && !draining && inflight === 0 && buffer.length === 0) {
-    process.exit(0);
-  }
+  if (stdinEnded && !draining && buffer.length === 0) process.exit(0);
 }
 
 async function drainBuffer() {
-  while (buffer.length) {
-    if (buffer.startsWith('Content-Length:')) {
-      const headerEnd = buffer.indexOf('\r\n\r\n');
-      if (headerEnd < 0) return;
-      const header = buffer.slice(0, headerEnd);
-      const match = /Content-Length:\s*(\d+)/i.exec(header);
-      if (!match) throw new Error('Invalid Content-Length header');
-      const length = Number(match[1]);
-      const bodyStart = headerEnd + 4;
-      if (buffer.length < bodyStart + length) return;
-      const body = buffer.slice(bodyStart, bodyStart + length);
-      buffer = buffer.slice(bodyStart + length);
-      await handleMessage(JSON.parse(body));
-      continue;
-    }
-
-    const newline = buffer.indexOf('\n');
-    if (newline < 0) return;
+  let newline;
+  while ((newline = buffer.indexOf('\n')) !== -1) {
     const line = buffer.slice(0, newline).trim();
     buffer = buffer.slice(newline + 1);
     if (!line) continue;
-    await handleMessage(JSON.parse(line));
+
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      sendError(null, -32700, 'Parse error');
+      continue;
+    }
+    await handleMessage(message);
   }
 }
 
 async function handleMessage(message) {
-  if (!message || message.jsonrpc !== '2.0') {
-    sendError(message?.id ?? null, -32600, 'Invalid JSON-RPC request');
+  if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
+    sendError(message?.id ?? null, -32600, 'Invalid Request');
     return;
   }
 
-  if (!('id' in message)) {
-    // Notification. initialized/cancelled notifications do not require a response.
+  if (!Object.prototype.hasOwnProperty.call(message, 'id')) {
+    if (message.method === 'notifications/initialized') initialized = true;
     return;
   }
 
-  inflight += 1;
   try {
     const result = await dispatch(message.method, message.params || {});
     send({ jsonrpc: '2.0', id: message.id, result });
   } catch (error) {
-    sendError(message.id, -32603, redactSecrets(formatError(error)));
-  } finally {
-    inflight -= 1;
-    maybeExit();
+    const code = Number.isInteger(error?.rpcCode) ? error.rpcCode : -32603;
+    sendError(message.id, code, redactSecrets(error?.message || formatError(error)));
   }
 }
 
 async function dispatch(method, params) {
   switch (method) {
-    case 'initialize':
+    case 'initialize': {
+      const requested = params?.protocolVersion;
+      const protocolVersion = MCP_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_MCP_PROTOCOL_VERSION;
       return {
-        protocolVersion: params.protocolVersion || DEFAULT_PROTOCOL_VERSION,
-        capabilities: { tools: {} },
-        serverInfo: SERVER_INFO
+        protocolVersion,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: SERVER_INFO,
+        instructions: 'Use read-only Jules tools freely. Create, approve, and message tools require explicit human authorization. Never send secrets in prompts.'
       };
+    }
     case 'ping':
       return {};
     case 'tools/list':
       return { tools: TOOLS };
     case 'tools/call': {
-      const toolName = params.name;
-      const args = params.arguments || {};
+      if (!params || typeof params.name !== 'string') throw rpcError(-32602, 'Invalid params: tools/call requires name');
+      const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
       try {
-        const { text, data } = await callTool(toolName, args);
-        return {
-          content: [{ type: 'text', text }],
-          structuredContent: data
-        };
+        const { text, data } = await callTool(params.name, args);
+        const result = { content: [{ type: 'text', text: String(text ?? '') }] };
+        if (data !== undefined) result.structuredContent = data;
+        return result;
       } catch (toolError) {
-        // Per MCP spec, tool-execution failures must surface as result.isError=true,
-        // not as JSON-RPC error responses (which signal protocol/transport faults).
         return {
           isError: true,
           content: [{ type: 'text', text: redactSecrets(formatError(toolError)) }]
@@ -129,8 +117,14 @@ async function dispatch(method, params) {
       }
     }
     default:
-      throw new Error(`Unsupported MCP method: ${method}`);
+      throw rpcError(-32601, `Method not found: ${method}`);
   }
+}
+
+function rpcError(code, message) {
+  const error = new Error(message);
+  error.rpcCode = code;
+  return error;
 }
 
 function sendError(id, code, message) {
@@ -138,10 +132,7 @@ function sendError(id, code, message) {
 }
 
 function send(message) {
-  const payload = JSON.stringify(message);
-  if (framing === 'content-length') {
-    process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf8')}\r\n\r\n${payload}`);
-  } else {
-    process.stdout.write(`${payload}\n`);
-  }
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
+
+void initialized;

@@ -2,50 +2,40 @@
 
 ## Reporting a vulnerability
 
-If you find a vulnerability in this connector — credential leakage in logs, an
-auth bypass, a prompt-injection vector that defeats the plan-approval gate,
-anything that lets a Jules session escape its scope — please **do not** open a
-public issue.
+Please report security issues privately through GitHub's security advisory flow when available. Do not open a public issue containing credentials, exploit details, private repository names, customer data, or Jules session URLs.
 
-Email the maintainers (see commit history for current contacts) with:
+## API keys
 
-- Affected version (`package.json` `version`).
-- Reproduction steps.
-- Impact assessment.
-- Suggested fix if you have one.
+- Treat `JULES_API_KEY` as a secret.
+- Never put it in a Jules prompt, MCP argument, committed config file, screenshot, issue, PR, chat transcript, or CI log.
+- Configure it through the local environment editor, shell environment, or a secret manager.
+- Rotate a key immediately if it is pasted into any public or semi-public channel. Google may automatically disable exposed keys.
+- The connector redacts common key/token/password forms on a best-effort basis, but redaction is not a substitute for secret hygiene.
 
-Expect an acknowledgement within 5 business days.
+## Local data
 
-## Threat model and scope
+By default, session metadata, redacted prompts, logs, and patches are stored below `.jules-orchestrator/`. Plugin installations use their client-specific data directory when configured. These files may still contain repository names, task details, source code patches, session URLs, and command output.
 
-This connector is the orchestration glue between a local agent (Claude Code or
-Codex) and the Google Jules REST API. It does **not** itself run untrusted code,
-clone repositories, or apply patches. It produces unidiff text and PR URLs that
-your local tooling can act on.
+For sensitive work:
 
-In scope:
+- Set `JULES_STATE_DIR` to encrypted storage.
+- Apply restrictive filesystem permissions.
+- Delete artifacts when they are no longer needed.
+- Do not sync the state directory to public cloud folders.
 
-- Credential handling for `JULES_API_KEY` and `JULES_API_BASE_URL`.
-- Local state hygiene in `.jules-orchestrator/` (sessions, prompts, patches).
-- Prompt-checklist guardrail, branch validation, plan-approval gate.
-- Redaction of secrets in error output and persisted prompts/logs.
-- MCP `tools/call` error contract (`result.isError` vs JSON-RPC error).
+## Network and execution model
 
-Out of scope:
+- The connector sends prompts and feedback to the configured Jules API endpoint.
+- Repository-backed sessions require a repository connected to Jules through the user's account.
+- API reads may retry transient failures; writes are never retried automatically.
+- `AUTO_CREATE_PR` is disabled by default.
+- Implementation sessions require plan approval by default.
+- Review prompts explicitly request no edits, commits, branches, or pull requests, but that instruction is not a hard sandbox; users must inspect the returned state, artifacts, and outputs.
 
-- Vulnerabilities in Google Jules itself.
-- Vulnerabilities in Claude Code, Codex, or other MCP clients.
-- Vulnerabilities in the GitHub repositories you delegate work against.
+## MCP clients
 
-## Operator responsibilities
+The MCP server uses newline-delimited stdio JSON-RPC. It writes protocol messages only to stdout and diagnostics only to stderr. Mutating tools advertise explicit user-interaction metadata, but the host client remains responsible for enforcing approvals and process isolation.
 
-1. **Do not put secrets in Jules prompts, task templates, or feedback messages.** The connector redacts secrets in best-effort fashion when *writing* local prompts/logs, but it cannot redact what is *sent* to Google — once a value is in the `prompt` field, it leaves your machine.
-2. **Treat `JULES_API_KEY` like a GitHub token.** Inject via environment variable. Never commit it to a repo. The connector accepts the key only via `process.env.JULES_API_KEY` and never logs it.
-3. **Keep `requirePlanApproval: true` and `AUTO_CREATE_PR: false` as defaults.** Both are configurable per call. Auto-approving plans or auto-creating PRs from automated triggers (cron, webhooks, CI) defeats the human review gate and is not a supported configuration.
-4. **Review Jules' produced patches and PRs before merging.** The connector surfaces them; it does not vouch for them.
-5. **Connect repositories to Jules only through the Jules web app or GitHub App.** The API can read sources but cannot create them, by design.
+## Alpha API risk
 
-## Known limitations
-
-- The Jules REST API is documented as **alpha**. Field names may change without notice. All REST shape parsing is isolated in `src/jules-api.mjs`; if Google ships a breaking change, expect the version this connector pins against to surface clear errors rather than silent corruption.
-- `LocalState` writes session metadata, prompts, and patches under `.jules-orchestrator/` in plaintext. If your task prompts are sensitive, set `JULES_STATE_DIR` to a path on encrypted storage.
+The Jules REST API is versioned `v1alpha`; fields and behavior may change. Parsing is defensive, but a breaking upstream change can still cause failures. Pin releases, run the offline and live smoke tests, and inspect error bodies after redaction before updating production automation.

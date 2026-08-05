@@ -1,12 +1,12 @@
 import { branchNames, sourceLabel } from './source-resolver.mjs';
-import { activityHeadline, extractPullRequests } from './extract.mjs';
+import { activityHeadline, extractPullRequests, sortActivities } from './extract.mjs';
 
 export function formatSources(sources) {
   if (!sources.length) return 'No Jules sources returned. Connect a GitHub repository in the Jules web app first.';
   const rows = sources.map(source => ({
     repo: sourceLabel(source),
     name: source.name || '',
-    defaultBranch: source.githubRepo?.defaultBranch?.displayName || '',
+    defaultBranch: source.githubRepo?.defaultBranch?.displayName || source.githubRepo?.defaultBranch?.name || '',
     private: source.githubRepo?.isPrivate === true ? 'private' : source.githubRepo?.isPrivate === false ? 'public' : '',
     branches: branchNames(source).slice(0, 8).join(', ')
   }));
@@ -42,7 +42,7 @@ export function formatSession(session) {
 
 export function formatActivities(activities) {
   if (!activities.length) return 'No activities returned.';
-  return activities.map(activity => {
+  return sortActivities(activities).map(activity => {
     const time = activity.createTime ? `${activity.createTime} ` : '';
     const originator = activity.originator ? `[${activity.originator}] ` : '';
     return `${time}${originator}${activityHeadline(activity)}`;
@@ -51,9 +51,7 @@ export function formatActivities(activities) {
 
 export function formatTable(rows, columns) {
   const widths = {};
-  for (const col of columns) {
-    widths[col] = Math.max(col.length, ...rows.map(row => String(row[col] ?? '').length));
-  }
+  for (const col of columns) widths[col] = Math.max(col.length, ...rows.map(row => String(row[col] ?? '').length));
   const header = columns.map(col => pad(col, widths[col])).join('  ');
   const sep = columns.map(col => '-'.repeat(widths[col])).join('  ');
   const body = rows.map(row => columns.map(col => pad(String(row[col] ?? ''), widths[col])).join('  ')).join('\n');

@@ -1,113 +1,50 @@
 ---
-description: Delegate scoped GitHub coding tasks to Google Jules through the local jules-delegate CLI or jules MCP server. Use when the user asks Claude Code to assign work to Jules, create/monitor/approve a Jules session, fetch a Jules PR/patch/result, or orchestrate an async implementation task in a connected GitHub repo. Do not use for broad architectural rewrites, unscoped tasks, or prompts containing secrets.
+description: Delegate scoped GitHub implementation or no-edit review request tasks to Google Jules through the local jules-delegate CLI or Jules MCP server. Use when the user asks Claude Code to create, inspect, monitor, approve, message, review, or retrieve results from a Jules session. Do not use for ambiguous tasks, uncontrolled broad rewrites, or prompts containing secrets.
 argument-hint: [repo/branch/task]
 allowed-tools: Bash Read Write
 ---
 
 # Jules Delegate
 
-Use Google Jules as an async coding implementer while Claude remains the orchestrator and review gate.
+Use Jules asynchronously while Claude remains responsible for task scoping, human approvals, repository validation, and final review.
 
-## Required safety defaults
-
-- Verify the repository with `jules-delegate sources` before creating a session unless the user provides an exact `sources/...` name.
-- Create sessions with plan approval required by default.
-- Do not call `approve` until the user explicitly approves the displayed plan.
-- Do not include secrets, tokens, credentials, or customer data in the prompt or feedback.
-- Do not use `--auto-pr` unless the user explicitly asks for PR creation and the task is low risk.
-- Stop and report back when Jules enters `AWAITING_PLAN_APPROVAL`, `AWAITING_USER_FEEDBACK`, `FAILED`, `PAUSED`, or `COMPLETED`.
-
-## Task shape
-
-Prepare a Jules prompt with these sections:
-
-```markdown
-# Jules Task
-
-## Repo
-owner/repo
-
-## Base branch
-main
-
-## Goal
-One precise implementation goal.
-
-## Scope
-Files, modules, or behaviors Jules may change.
-
-## Constraints
-Hard limits, dependencies, compatibility, security notes.
-
-## Acceptance criteria
-Concrete pass/fail requirements.
-
-## Validation commands
-Commands Jules should run.
-
-## Out of scope
-Explicit non-goals.
-
-## PR policy
-Generate a PR only if asked. Never merge.
-```
-
-## CLI workflow
-
-1. Check connected sources:
+## Preflight
 
 ```bash
-node ./bin/jules-delegate.mjs sources
+jules-delegate doctor --repo owner/repo
 ```
 
-If the connector is installed globally, use `jules-delegate` instead of `node ./bin/jules-delegate.mjs`.
+Or call `jules_list_sources`. The repository must be connected to the current Jules account. Claude Code Desktop users should configure `JULES_API_KEY` in the Local environment editor rather than relying on shell inheritance.
 
-2. Write the prompt to `.jules-orchestrator/prompts/next-task.md` or another project-local file.
+## Implementation workflow
 
-3. Create the session:
+1. Prepare a prompt with repo, base branch, goal, scope, constraints, acceptance criteria, validation commands, out-of-scope, and PR policy.
+2. Create the session with plan approval enabled and auto-PR disabled unless explicitly authorized.
+3. Stop at plan approval and show the full plan to the user.
+4. Call approval only after explicit human consent.
+5. Stop at user feedback, failure, pause, or completion.
+6. Retrieve compact result, validation output, and patch separately.
+7. Review and test the result locally before saying it is ready.
+
+## Review-only workflow
 
 ```bash
-jules-delegate create --repo owner/repo --branch main --title "Short task title" --prompt-file .jules-orchestrator/prompts/next-task.md
+jules-delegate review --repo owner/repo --branch main
 ```
 
-4. Watch until Jules needs approval/feedback or finishes:
+The built-in prompt prohibits edits, commits, branches, and PRs. Return severity-ranked findings with file evidence and a release-readiness assessment.
 
-```bash
-jules-delegate watch sessions/SESSION_ID
-```
+## Guardrails
 
-5. Show the latest plan:
+- Never send secrets or customer data.
+- Never merge automatically.
+- Never claim validation passed without command evidence.
+- Do not request an unbounded patch or full activity feed when a compact tool exists.
 
-```bash
-jules-delegate plan sessions/SESSION_ID
-```
+## Context-efficient artifact review
 
-6. If the user approves, continue:
-
-```bash
-jules-delegate approve sessions/SESSION_ID
-```
-
-7. If the user requests changes, send feedback:
-
-```bash
-jules-delegate tell sessions/SESSION_ID --message-file feedback.md
-```
-
-8. After completion, retrieve result and patch:
-
-```bash
-jules-delegate result sessions/SESSION_ID
-jules-delegate patch sessions/SESSION_ID --output .jules-orchestrator/patches/SESSION_ID.patch
-```
-
-## Final response checklist
-
-Return:
-
-- Jules session URL and PR URL, if present.
-- Current state.
-- Plan summary or completion summary.
-- Patch/diff summary and major touched areas.
-- Validation commands Jules ran or should run locally.
-- Manual review risks and next action.
+1. Call `jules_get_result`.
+2. Call `jules_list_changed_files`.
+3. Call `jules_get_file_diff` for focused files.
+4. Use `jules_get_patch` only when the whole capped patch is necessary.
+5. Use `jules_get_bash_outputs` for validation evidence.

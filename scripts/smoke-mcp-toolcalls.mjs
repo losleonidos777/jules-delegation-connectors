@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Live MCP tool-call smoke: drives the stdio server with real JULES_API_KEY,
-// calls jules_list_sources and jules_get_session, asserts results parse.
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 
@@ -9,7 +7,7 @@ if (!apiKey) {
   console.error('JULES_API_KEY required');
   process.exit(2);
 }
-const sessionId = process.argv[2] || 'sessions/17377204978182872982';
+const requestedSessionId = process.argv[2];
 
 const child = spawn(process.execPath, ['./bin/jules-mcp.mjs'], {
   cwd: new URL('..', import.meta.url),
@@ -17,73 +15,92 @@ const child = spawn(process.execPath, ['./bin/jules-mcp.mjs'], {
   stdio: ['pipe', 'pipe', 'pipe']
 });
 
-let buf = '';
+let buffer = '';
 const pending = new Map();
 let nextId = 1;
+
 function send(method, params) {
   const id = nextId++;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`timeout waiting for ${method} id=${id}`));
+    }, 45000);
+    pending.set(id, {
+      resolve: message => {
+        clearTimeout(timer);
+        resolve(message);
+      },
+      reject
+    });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
-    setTimeout(() => {
-      if (pending.has(id)) {
-        pending.delete(id);
-        reject(new Error(`timeout waiting for response to ${method} id=${id}`));
-      }
-    }, 30000);
   });
 }
 
 child.stdout.on('data', chunk => {
-  buf += chunk.toString('utf8');
-  let nl;
-  while ((nl = buf.indexOf('\n')) !== -1) {
-    const line = buf.slice(0, nl).trim();
-    buf = buf.slice(nl + 1);
+  buffer += chunk.toString('utf8');
+  let newline;
+  while ((newline = buffer.indexOf('\n')) !== -1) {
+    const line = buffer.slice(0, newline).trim();
+    buffer = buffer.slice(newline + 1);
     if (!line) continue;
-    let msg;
-    try { msg = JSON.parse(line); } catch { continue; }
-    const p = pending.get(msg.id);
-    if (p) { pending.delete(msg.id); p.resolve(msg); }
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const item = pending.get(message.id);
+    if (item) {
+      pending.delete(message.id);
+      item.resolve(message);
+    }
   }
 });
-child.stderr.on('data', c => process.stderr.write(c));
+child.stderr.on('data', chunk => process.stderr.write(chunk));
 
 async function run() {
-  const init = await send('initialize', { protocolVersion: '2025-06-18' });
-  assert.equal(init.result.serverInfo.name, 'jules-delegate-mcp', 'serverInfo.name');
+  const init = await send('initialize', {
+    protocolVersion: '2025-11-25',
+    capabilities: {},
+    clientInfo: { name: 'live-smoke', version: '1' }
+  });
+  assert.equal(init.result.serverInfo.name, 'jules-delegate-mcp');
+  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) + '\n');
 
   const toolList = await send('tools/list', {});
-  const toolNames = toolList.result.tools.map(t => t.name).sort();
-  console.log('tools:', toolNames.join(', '));
-  for (const required of ['jules_list_sources', 'jules_create_session', 'jules_get_session', 'jules_list_activities', 'jules_get_plan', 'jules_approve_plan', 'jules_send_message', 'jules_get_result', 'jules_get_patch']) {
+  const toolNames = toolList.result.tools.map(tool => tool.name).sort();
+  for (const required of ['jules_list_sources', 'jules_list_sessions', 'jules_get_session', 'jules_get_bash_outputs', 'jules_list_changed_files', 'jules_get_file_diff']) {
     assert.ok(toolNames.includes(required), `missing tool ${required}`);
   }
 
   const sources = await send('tools/call', { name: 'jules_list_sources', arguments: {} });
-  assert.ok(sources.result, 'jules_list_sources had no result');
-  const sourcesPayload = sources.result.structuredContent;
-  assert.ok(Array.isArray(sourcesPayload), 'list_sources structuredContent is not array');
-  console.log('jules_list_sources returned', sourcesPayload.length, 'source(s)');
+  assert.ok(Array.isArray(sources.result.structuredContent), 'list_sources structuredContent is not an array');
+  console.log('jules_list_sources returned', sources.result.structuredContent.length, 'source(s)');
 
-  const ses = await send('tools/call', { name: 'jules_get_session', arguments: { sessionId } });
-  assert.ok(ses.result, 'jules_get_session had no result');
-  const sesPayload = ses.result.structuredContent;
-  assert.ok(sesPayload && sesPayload.name && sesPayload.name.startsWith('sessions/'), 'session payload missing name');
-  console.log('jules_get_session ->', sesPayload.name, sesPayload.state);
+  const sessions = await send('tools/call', { name: 'jules_list_sessions', arguments: { pageSize: 10 } });
+  assert.ok(Array.isArray(sessions.result.structuredContent), 'list_sessions structuredContent is not an array');
+  console.log('jules_list_sessions returned', sessions.result.structuredContent.length, 'session(s)');
 
-  const errCall = await send('tools/call', { name: 'jules_get_session', arguments: { sessionId: 'sessions/0' } });
-  const errPayload = errCall.result && errCall.result.content && errCall.result.content[0] && errCall.result.content[0].text;
-  console.log('error path tool isError=', errCall.result && errCall.result.isError, 'text head:', String(errPayload || '').slice(0, 120));
-  assert.ok(errCall.result && errCall.result.isError === true, 'expected isError=true for invalid session');
+  const sessionId = requestedSessionId || sessions.result.structuredContent[0]?.name || sessions.result.structuredContent[0]?.id;
+  if (sessionId) {
+    const session = await send('tools/call', { name: 'jules_get_session', arguments: { sessionId } });
+    assert.ok(session.result.structuredContent?.name || session.result.structuredContent?.id, 'session payload missing id');
+    console.log('jules_get_session ->', session.result.structuredContent.name || session.result.structuredContent.id, session.result.structuredContent.state);
+  } else {
+    console.log('No sessions available; skipped jules_get_session read.');
+  }
 
-  console.log('MCP tool-call smoke PASSED');
-  child.kill();
-  process.exit(0);
+  const errorCall = await send('tools/call', { name: 'jules_get_session', arguments: {} });
+  assert.equal(errorCall.result?.isError, true, 'expected isError=true for missing sessionId');
+  assert.doesNotMatch(errorCall.result.content[0].text, /test-key|AQ\.|AIza/, 'error output leaked a key');
+
+  console.log('MCP live tool-call smoke PASSED');
+  child.stdin.end();
 }
 
-run().catch(err => {
-  console.error('MCP tool-call smoke FAILED:', err.message);
+run().catch(error => {
+  console.error('MCP live tool-call smoke FAILED:', error.message);
   child.kill();
   process.exit(1);
 });

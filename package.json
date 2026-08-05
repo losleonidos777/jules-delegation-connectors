@@ -1,8 +1,8 @@
 {
   "name": "jules-delegation-connectors",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": false,
-  "description": "Zero-dependency CLI, MCP server, Claude Code plugin and Codex plugin for delegating GitHub coding tasks to Google Jules.",
+  "description": "Zero-dependency CLI, MCP server, Claude Code plugin and Codex plugin for safely delegating GitHub coding tasks to Google Jules.",
   "type": "module",
   "bin": {
     "jules-delegate": "./bin/jules-delegate.mjs",
@@ -12,7 +12,11 @@
     "test": "node --test",
     "smoke:cli": "node ./bin/jules-delegate.mjs --help",
     "smoke:mcp": "node ./scripts/smoke-mcp.mjs",
-    "smoke:mcp:live": "node ./scripts/smoke-mcp-toolcalls.mjs"
+    "smoke:mcp:live": "node ./scripts/smoke-mcp-toolcalls.mjs",
+    "live:review": "node ./scripts/live-review.mjs",
+    "sync:plugins": "node ./scripts/sync-plugins.mjs",
+    "check:plugins": "node ./scripts/sync-plugins.mjs --check",
+    "check": "npm test && npm run smoke:cli && npm run smoke:mcp && npm run check:plugins"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -42,6 +46,11 @@
     "templates/",
     "examples/",
     "docs/",
+    ".agents/",
+    ".claude/",
+    "plugins/",
+    "AGENTS.md",
+    "CLAUDE.md",
     "README.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",

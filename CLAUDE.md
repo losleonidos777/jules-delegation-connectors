@@ -1,12 +1,12 @@
 # Claude Code project policy: Jules delegation
 
-Use the `/jules-delegate` skill or the `jules` MCP server when the user asks Claude to hand a scoped implementation task to Google Jules.
+Use `/jules-delegate` or the `jules` MCP server when the user explicitly asks to delegate a scoped implementation or review to Google Jules.
 
-Safety rules:
-
-- Always call `sources` before creating a Jules session unless the user provided an exact `sources/...` resource name.
-- Use `requirePlanApproval: true` by default.
-- Ask the user before approving a plan or enabling `AUTO_CREATE_PR`.
-- Do not put secrets in Jules prompts, logs, or feedback.
-- Stop and report back when Jules enters `AWAITING_PLAN_APPROVAL` or `AWAITING_USER_FEEDBACK`.
-- Review diff/patch summaries before telling the user a task is ready.
+- Run `jules-delegate doctor --repo owner/repo` or `jules_list_sources` before creating repository-backed sessions.
+- Use structured prompts with goal, scope, constraints, acceptance criteria, validation commands, out-of-scope, and PR policy.
+- Require plan approval for implementation sessions unless the user explicitly opts out.
+- Ask the user before approving a plan, sending consequential feedback, or enabling auto-PR.
+- Use compact result and changed-file tools first, then request one file diff, validation output, or a capped whole patch as needed.
+- Stop and report at plan approval, user feedback, failure, pause, or completion states.
+- Never include keys, tokens, credentials, or private customer data in Jules prompts or logs.
+- Review every produced diff and validation result before saying the work is ready.

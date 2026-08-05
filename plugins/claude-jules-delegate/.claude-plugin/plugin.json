@@ -1,8 +1,13 @@
 {
   "name": "jules-delegate",
-  "description": "Delegate scoped GitHub coding tasks to Google Jules with a Claude Code skill and MCP tools.",
-  "version": "0.1.0",
+  "description": "Safely delegate scoped GitHub coding tasks and read-only reviews to Google Jules with Claude Code.",
+  "version": "0.2.0",
   "author": {
-    "name": "Jules Delegation Connectors"
-  }
+    "name": "Jules Delegation Connectors",
+    "url": "https://github.com/losleonidos777"
+  },
+  "homepage": "https://github.com/losleonidos777/jules-delegation-connectors",
+  "repository": "https://github.com/losleonidos777/jules-delegation-connectors",
+  "license": "MIT",
+  "keywords": ["jules", "claude-code", "mcp", "delegation", "code-review"]
 }
