@@ -135,7 +135,8 @@ function redactObject(value) {
 function normalizedStateDir(input) {
   if (input === undefined || input === null) return undefined;
   const value = String(input).trim();
-  if (!value || /^\$\{[^}]+\}$/.test(value)) return undefined;
+  // Also rejects composed placeholders like ${CLAUDE_PLUGIN_DATA}/state, which would create a literal directory.
+  if (!value || /\$\{[^}]*\}/.test(value)) return undefined;
   return value;
 }
 

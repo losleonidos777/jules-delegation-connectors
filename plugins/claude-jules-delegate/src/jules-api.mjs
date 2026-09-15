@@ -8,7 +8,8 @@ const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 export function normalizeEnvValue(input) {
   if (input === undefined || input === null) return undefined;
   const value = String(input).trim();
-  if (!value || /^\$\{[^}]+\}$/.test(value)) return undefined;
+  // Reject values that still carry an unexpanded ${VAR}, including composed forms like ${DATA_DIR}/state.
+  if (!value || /\$\{[^}]*\}/.test(value)) return undefined;
   return value;
 }
 
@@ -199,12 +200,16 @@ export class JulesApi {
   async listActivities(sessionId, { pageSize = 100, since } = {}) {
     const cursor = since ? Date.parse(String(since)) : undefined;
     if (since && !Number.isFinite(cursor)) throw new Error(`since must be a valid RFC 3339 timestamp; got: ${since}`);
+    // ListActivities takes the cursor as an AIP-160 filter; a bare createTime query parameter is rejected with 400.
+    // The timestamp is rebuilt from the parsed value, so only millisecond precision reaches the server; the local
+    // filter below re-applies the original sub-millisecond cursor.
+    const filter = cursor === undefined ? undefined : `create_time>"${new Date(cursor).toISOString()}"`;
 
     const activities = [];
     let pageToken;
     do {
       const res = await this.request('GET', `/${sessionName(sessionId)}/activities`, {
-        query: { pageSize: clampPageSize(pageSize), pageToken, createTime: since }
+        query: { pageSize: clampPageSize(pageSize), pageToken, filter }
       });
       activities.push(...asArray(res.activities));
       pageToken = res.nextPageToken;

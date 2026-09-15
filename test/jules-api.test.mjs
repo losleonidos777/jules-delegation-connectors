@@ -55,7 +55,7 @@ test('createSession supports repoless payloads and rejects repoless auto-PR', as
   await assert.rejects(() => api.createSession({ prompt: 'bad', autoCreatePr: true }), /requires a repository source/);
 });
 
-test('listSources follows pagination and listActivities sends and defensively applies the createTime cursor', async () => {
+test('listSources follows pagination and listActivities sends and defensively applies the create_time filter cursor', async () => {
   const urls = [];
   const api = new JulesApi({
     apiKey: 'test-key',
@@ -82,7 +82,12 @@ test('listSources follows pagination and listActivities sends and defensively ap
   assert.deepEqual(sources.map(source => source.name), ['sources/one', 'sources/two']);
   const activities = await api.listActivities('sessions/1', { since: '2026-01-17T00:03:53.137240Z' });
   assert.deepEqual(activities.map(activity => activity.id), ['after', 'unknown']);
-  assert.ok(urls.some(url => url.includes('createTime=2026-01-17T00%3A03%3A53.137240Z')));
+  const activityUrl = urls.find(url => url.includes('/activities'));
+  assert.ok(
+    activityUrl.includes(`filter=${encodeURIComponent('create_time>"2026-01-17T00:03:53.137Z"')}`),
+    `expected an AIP-160 create_time filter, got ${activityUrl}`
+  );
+  assert.ok(!activityUrl.includes('createTime='), 'createTime is not a valid query parameter and must not be sent');
   await assert.rejects(() => api.listActivities('sessions/1', { since: 'not-a-date' }), /valid RFC 3339/);
 });
 
