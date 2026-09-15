@@ -27,7 +27,10 @@ export function formatPlan(plan) {
 
 function agentMessageText(activity) {
   const event = activity?.agentMessaged;
-  return event ? asText(event.agentMessage || event.message || event.text) : '';
+  if (event) return asText(event.agentMessage || event.message || event.text);
+  // Completed sessions carry the agent's narration in progressUpdated, not agentMessaged.
+  const progress = activity?.progressUpdated;
+  return progress ? asText(progress.description || progress.title) : '';
 }
 
 function userMessageText(activity) {
@@ -45,11 +48,15 @@ export function latestAgentMessage(activities) {
 
 export function extractPatches(activities) {
   const patches = [];
+  // Jules repeats the whole cumulative patch on every progress artifact, so keep one entry per distinct patch text.
+  const seen = new Set();
   for (const activity of sortActivities(activities)) {
     for (const artifact of asArray(activity?.artifacts)) {
       const gitPatch = artifact?.changeSet?.gitPatch;
       const patch = gitPatch?.unidiffPatch;
       if (typeof patch !== 'string' || !patch) continue;
+      if (seen.has(patch)) continue;
+      seen.add(patch);
       patches.push({
         activityId: activity.id,
         activityName: activity.name,
@@ -185,14 +192,25 @@ export function activityHeadline(activity) {
   if (activity.planApproved) return 'Plan approved';
   if (activity.userMessaged) return truncateText(userMessageText(activity), 180) || 'User message';
   if (activity.agentMessaged) return truncateText(agentMessageText(activity), 180) || 'Agent message';
-  if (activity.progressUpdated) return activity.progressUpdated.title || activity.progressUpdated.description || 'Progress update';
+  if (activity.progressUpdated) {
+    return truncateText(activity.progressUpdated.title || activity.progressUpdated.description, 180) || 'Progress update';
+  }
   if (activity.sessionCompleted) return 'Session completed';
   if (activity.sessionFailed) return activity.sessionFailed.reason || activity.sessionFailed.message || 'Session failed';
   return activity.description || activity.id || '<activity>';
 }
 
+export function signalActivities(activities) {
+  // Jules emits empty progressUpdated events; they carry no information and would crowd out real timeline entries.
+  return sortActivities(activities).filter(activity => {
+    const progress = activity.progressUpdated;
+    if (!progress) return true;
+    return Boolean(asText(progress.title) || asText(progress.description));
+  });
+}
+
 export function summarizeActivities(activities, { limit = 12 } = {}) {
-  const sorted = sortActivities(activities);
+  const sorted = signalActivities(activities);
   const tail = sorted.slice(Math.max(0, sorted.length - limit));
   return tail.map(activity => {
     const time = activity.createTime ? `${activity.createTime} ` : '';
@@ -275,7 +293,30 @@ export function summarizeResult(session, activities) {
 export function truncateText(value, maxChars) {
   const text = asText(value);
   if (!Number.isFinite(maxChars) || maxChars <= 0 || text.length <= maxChars) return text;
-  return `${text.slice(0, Math.max(0, maxChars - 25))}\n...[truncated ${text.length - maxChars} chars]`;
+  const marker = dropped => `\n...[truncated ${dropped} chars]`;
+  // Size the marker from the largest possible count so the result never exceeds maxChars.
+  const keep = Math.max(0, maxChars - marker(text.length).length);
+  return `${text.slice(0, keep)}${marker(text.length - keep)}`;
+}
+
+export function compactActivities(activities) {
+  // The same cumulative patch is attached to nearly every activity; keep the metadata and drop the repeated bodies.
+  return asArray(activities).map(activity => {
+    const artifacts = asArray(activity?.artifacts);
+    if (!artifacts.length) return activity;
+    return {
+      ...activity,
+      artifacts: artifacts.map(artifact => {
+        const gitPatch = artifact?.changeSet?.gitPatch;
+        if (typeof gitPatch?.unidiffPatch !== 'string') return artifact;
+        const { unidiffPatch, ...rest } = gitPatch;
+        return {
+          ...artifact,
+          changeSet: { ...artifact.changeSet, gitPatch: { ...rest, unidiffPatchChars: unidiffPatch.length } }
+        };
+      })
+    };
+  });
 }
 
 function parseDiffGitHeader(line) {

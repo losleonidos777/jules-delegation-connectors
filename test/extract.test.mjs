@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   activityHeadline,
+  compactActivities,
   extractBashOutputs,
   extractChangedFiles,
   extractPatches,
@@ -13,7 +14,9 @@ import {
   latestPatch,
   latestPlan,
   resultSnapshot,
+  signalActivities,
   splitUnifiedDiff,
+  summarizeActivities,
   summarizeResult,
   truncateText
 } from '../src/extract.mjs';
@@ -111,10 +114,47 @@ test('tolerates malformed activity payloads', () => {
   assert.equal(extractBashOutputs(malformed).length, 0);
 });
 
-test('truncates large text with a marker', () => {
+test('truncates large text within the requested cap and reports the exact drop', () => {
   const value = truncateText('x'.repeat(100), 50);
-  assert.ok(value.length <= 80);
-  assert.match(value, /truncated/);
+  assert.ok(value.length <= 50, `expected at most 50 chars, got ${value.length}`);
+  const kept = value.slice(0, value.indexOf('\n...[truncated'));
+  const dropped = Number(value.match(/truncated (\d+) chars/)[1]);
+  assert.equal(kept.length + dropped, 100);
+});
+
+test('reads agent narration from progressUpdated, dedupes repeated patches, and drops empty progress events', () => {
+  const patch = 'diff --git a/docs/x.md b/docs/x.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/x.md\n@@ -0,0 +1 @@\n+hi\n';
+  const changeSet = { source: 'sources/github/acme/repo', gitPatch: { baseCommitId: 'abc', unidiffPatch: patch } };
+  const live = [
+    { id: 'p1', createTime: '2026-08-06T02:36:00Z', originator: 'agent', progressUpdated: {} },
+    {
+      id: 'p2',
+      createTime: '2026-08-06T02:36:10Z',
+      originator: 'agent',
+      progressUpdated: { title: 'Generated the file', description: 'I created docs/x.md from the front matter.' },
+      artifacts: [{ changeSet }]
+    },
+    { id: 'p3', createTime: '2026-08-06T02:36:20Z', originator: 'agent', progressUpdated: {}, artifacts: [{ changeSet }] },
+    {
+      id: 'p4',
+      createTime: '2026-08-06T02:36:30Z',
+      originator: 'agent',
+      progressUpdated: { title: 'Finished the task', description: 'Left the file in the working tree; no PR.' },
+      artifacts: [{ changeSet }]
+    },
+    { id: 'done', createTime: '2026-08-06T02:36:40Z', originator: 'agent', sessionCompleted: {}, artifacts: [{ changeSet }] }
+  ];
+
+  assert.equal(extractPatches(live).length, 1);
+  assert.equal(latestAgentMessage(live).text, 'Left the file in the working tree; no PR.');
+  assert.match(summarizeResult({ name: 'sessions/1', state: 'COMPLETED' }, live), /## Final agent message/);
+  assert.deepEqual(signalActivities(live).map(activity => activity.id), ['p2', 'p4', 'done']);
+  assert.equal(summarizeActivities(live).split('\n').length, 3);
+
+  const gitPatch = compactActivities(live)[1].artifacts[0].changeSet.gitPatch;
+  assert.equal(gitPatch.unidiffPatchChars, patch.length);
+  assert.equal(gitPatch.unidiffPatch, undefined);
+  assert.equal(gitPatch.baseCommitId, 'abc');
 });
 
 test('splits unified diffs and retrieves one exact file diff', () => {
