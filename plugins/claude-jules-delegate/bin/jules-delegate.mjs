@@ -49,7 +49,7 @@ Usage:
 
 Defaults:
   --require-plan is true for implementation sessions unless --no-require-plan is passed.
-  review sends a no-edit/no-PR instruction and does not require plan approval unless --require-plan is passed; always inspect returned artifacts.
+  review asks for one added jules_review_report.md and no PR, and does not require plan approval unless --require-plan is passed; always inspect returned artifacts.
   Local state is stored in .jules-orchestrator unless JULES_STATE_DIR is set.
 `;
 
@@ -314,7 +314,7 @@ async function cmdReview(api, state, flags) {
   if (flags.json) writeJson(session);
   else {
     print(formatSession(session));
-    print('Review request guardrails: Jules was instructed not to edit, commit, create branches, or open a PR. Inspect returned artifacts before trusting that constraint.');
+    print('Review request guardrails: Jules was instructed to add only jules_review_report.md and not to commit, branch, or open a PR. This is a prompt, not a sandbox: run \'files\' on the session and confirm the diff touches only that file.');
     print(`Next: jules-delegate watch ${session.name || session.id}`);
   }
 }

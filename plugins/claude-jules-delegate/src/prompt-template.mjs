@@ -63,12 +63,14 @@ Perform a read-only engineering review of the repository code and documentation.
 - Compare implementation assumptions with the current Google Jules REST API and current MCP behavior.
 
 ## Constraints
-- Do not edit files.
+- Do not modify, delete, or reformat any existing file.
+- Write the review to exactly one new file, \`jules_review_report.md\`, at the repository root, and change nothing else. Also summarize the findings in your final message.
 - Do not create commits, branches, or pull requests.
 - Do not expose credentials or include secrets in the response.
 - Separate verified defects from suggestions and clearly label uncertainty.
 
 ## Acceptance criteria
+- The diff contains exactly one added file, \`jules_review_report.md\`, and no other change.
 - Return findings ordered by severity with file paths and concrete evidence.
 - Include likely root causes for Claude Code Desktop and Codex integration failures.
 - Recommend specific fixes and missing tests.
@@ -80,7 +82,7 @@ Perform a read-only engineering review of the repository code and documentation.
 - Review REST request and response parsing against current Jules API shapes.
 
 ## Out of scope
-- Making any repository changes.
+- Any change other than adding \`jules_review_report.md\`.
 - Opening or merging a pull request.
 - Broad product strategy unrelated to this connector.
 
