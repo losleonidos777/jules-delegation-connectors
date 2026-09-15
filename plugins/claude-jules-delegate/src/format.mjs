@@ -1,5 +1,5 @@
 import { branchNames, sourceLabel } from './source-resolver.mjs';
-import { activityHeadline, extractPullRequests, sortActivities } from './extract.mjs';
+import { activityHeadline, extractPullRequests, signalActivities } from './extract.mjs';
 
 export function formatSources(sources) {
   if (!sources.length) return 'No Jules sources returned. Connect a GitHub repository in the Jules web app first.';
@@ -42,7 +42,9 @@ export function formatSession(session) {
 
 export function formatActivities(activities) {
   if (!activities.length) return 'No activities returned.';
-  return sortActivities(activities).map(activity => {
+  const signal = signalActivities(activities);
+  if (!signal.length) return `No informative activities returned (${activities.length} empty progress events).`;
+  return signal.map(activity => {
     const time = activity.createTime ? `${activity.createTime} ` : '';
     const originator = activity.originator ? `[${activity.originator}] ` : '';
     return `${time}${originator}${activityHeadline(activity)}`;

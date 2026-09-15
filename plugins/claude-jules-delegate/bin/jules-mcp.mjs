@@ -107,7 +107,7 @@ async function dispatch(method, params) {
       try {
         const { text, data } = await callTool(params.name, args);
         const result = { content: [{ type: 'text', text: String(text ?? '') }] };
-        if (data !== undefined) result.structuredContent = data;
+        if (data !== undefined && data !== null) result.structuredContent = data;
         return result;
       } catch (toolError) {
         return {

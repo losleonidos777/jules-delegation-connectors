@@ -2,6 +2,7 @@ import { JulesApi } from './jules-api.mjs';
 import { resolveSource, assertBranchAllowed, defaultBranch, findSource, normalizeRepo } from './source-resolver.mjs';
 import { LocalState } from './state.mjs';
 import {
+  compactActivities,
   extractBashOutputs,
   extractChangedFiles,
   extractPatches,
@@ -66,7 +67,7 @@ export const TOOLS = [
   tool({
     name: 'jules_list_activities',
     title: 'List Jules activities',
-    description: 'List immutable activity events for a session. Use since with an RFC 3339 createTime cursor to fetch only newer events.',
+    description: 'List immutable activity events for a session. Patch bodies are replaced with a character count; use jules_get_file_diff or jules_get_patch for diffs. Use since with an RFC 3339 createTime cursor to fetch only newer events.',
     annotations: READ_ONLY,
     meta: { 'anthropic/maxResultSizeChars': 300000 },
     inputSchema: schema({
@@ -216,7 +217,8 @@ export async function callTool(name, args = {}, { api = new JulesApi(), state = 
         pageSize: args.pageSize || 100,
         since: args.since
       });
-      return { text: JSON.stringify(activities, null, 2), data: activities };
+      const compact = compactActivities(activities);
+      return { text: JSON.stringify(compact, null, 2), data: compact };
     }
     case 'jules_get_activity': {
       const activity = await api.getActivity(required(args.sessionId, 'sessionId'), required(args.activityId, 'activityId'));
