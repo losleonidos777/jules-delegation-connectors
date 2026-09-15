@@ -15,7 +15,7 @@ The repository contains:
 - Made Claude Code setup deterministic with documented environment-variable defaults and persistent plugin state, while keeping plugin MCP JSON to the documented stdio fields.
 - Added `doctor` diagnostics for Node, key configuration, API reachability, local state, repository connectivity, and optional official Jules CLI discovery.
 - Added safe no-edit repository review request sessions with `review` and `npm run live:review`.
-- Added current Jules API features: repoless sessions, single-activity reads, `bashOutput` extraction, and the official `createTime` activity range cursor with defensive local filtering.
+- Added current Jules API features: repoless sessions, single-activity reads, `bashOutput` extraction, and the `filter=create_time>"..."` activity range cursor with defensive local filtering.
 - Updated MCP lifecycle/version negotiation for protocol 2025-11-25 while retaining common older protocol versions.
 - Added tool annotations, explicit user-interaction metadata for mutating tools, and compact result payloads to reduce context pressure.
 - Removed the account-specific session ID from the live smoke test.
@@ -101,7 +101,9 @@ jules-delegate activity sessions/123 activity-id --json
 jules-delegate bash sessions/123
 ```
 
-Jules activities are immutable. Persist the latest `createTime` and pass it back as `--since`; the connector sends the official range cursor, paginates the response, and defensively filters strictly newer events locally.
+Jules activities are immutable. Persist the latest `createTime` and pass it back as `--since`; the connector sends it as the `filter=create_time>"..."` range cursor, paginates the response, and defensively filters strictly newer events locally.
+
+`bash` returns `bashOutput` artifacts when Jules emits them. As of 2026-08-06 live sessions return only `changeSet` artifacts, so this command usually reports that none were found; read the validation evidence from the agent's final message in `result` instead.
 
 ## Claude Code Desktop
 

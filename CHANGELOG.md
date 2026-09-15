@@ -2,6 +2,29 @@
 
 All notable changes to Jules Delegation Connectors are documented here. The project follows Semantic Versioning and Keep a Changelog conventions.
 
+## [0.2.1] - 2026-08-06
+
+Live-verified against the Jules API on 2026-08-06. Every item below was reproduced against real sessions before and after the fix.
+
+### Fixed
+
+- The activity cursor no longer fails. `since`/`--since` sent `createTime` as a query parameter, which the API rejects with `400 INVALID_ARGUMENT: Unknown name "createTime"`, so every incremental read failed and the local filter never ran. The connector now sends the AIP-160 filter `create_time>"<RFC3339>"` and keeps the local sub-millisecond filter as a backstop.
+- The agent's conclusion is no longer dropped from results. Completed sessions carry narration in `progressUpdated.description`, not `agentMessaged`, so `## Final agent message` and `resultSnapshot.finalAgentMessage` were always empty for finished work. Both now read `progressUpdated`.
+- Repeated patches are deduplicated by content. Jules attaches the whole cumulative patch to nearly every activity; `jules_get_patch --mode all` returned 271,959 characters for a single 9 KB documentation change.
+- `jules_list_activities` no longer returns patch bodies. One documentation session produced a 305 KB response, above the tool's own declared 300 KB cap, 94% of it duplicated patch text. Patch bodies are replaced with `unidiffPatchChars`; use `jules_get_file_diff` or `jules_get_patch` for diffs.
+- Empty `progressUpdated` events are filtered out of timelines. They accounted for 39 of 43 activities in one session and rendered as identical "Progress update" lines.
+- `truncateText` respects its cap and reports the real drop count. A 1500-character request returned 1501 characters and understated the dropped size by the marker length.
+- Unresolved environment placeholders are rejected in composed form. `JULES_STATE_DIR=${CLAUDE_PLUGIN_DATA}/state` passed validation and created a literal `${CLAUDE_PLUGIN_DATA}` directory; only a bare `${VAR}` was caught before.
+- `structuredContent` is omitted instead of sent as `null` when a tool has no structured payload.
+
+### Changed
+
+- The `review` prompt no longer contradicts itself. A live review session was told "do not edit files" yet still wrote `jules_review_report.md`, so the instruction was unverifiable in practice. The template now permits exactly one added report file at a known path and requires a summary in the final message, which makes the constraint checkable: the diff must contain that file and nothing else.
+
+### Documented
+
+- `docs/API_NOTES.md` records the live-verified activity shapes: where agent narration actually lives, that patches repeat, and that `bashOutput` artifacts were not observed in any live response (only `changeSet`), so the bash tools stay forward-compatible rather than functional.
+
 ## [0.2.0] - 2026-08-05
 
 ### Fixed
@@ -49,6 +72,7 @@ All notable changes to Jules Delegation Connectors are documented here. The proj
 - Initial zero-dependency Jules REST CLI and MCP stdio server.
 - Claude Code and Codex skills/plugins, safe defaults, templates, and tests.
 
+[0.2.1]: https://github.com/losleonidos777/jules-delegation-connectors/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/losleonidos777/jules-delegation-connectors/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/losleonidos777/jules-delegation-connectors/releases/tag/v0.1.1
 [0.1.0]: https://github.com/losleonidos777/jules-delegation-connectors/releases/tag/v0.1.0

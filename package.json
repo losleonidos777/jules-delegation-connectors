@@ -1,6 +1,6 @@
 {
   "name": "jules-delegation-connectors",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
   "description": "Zero-dependency CLI, MCP server, Claude Code plugin and Codex plugin for safely delegating GitHub coding tasks to Google Jules.",
   "type": "module",
